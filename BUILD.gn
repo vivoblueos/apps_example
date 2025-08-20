@@ -18,7 +18,7 @@ import("//kernel/common_crate_rustflags.gni")
 
 group("check_apps") {
   deps = []
-  
+
   if (board == "raspberry_pico2_cortexm") {
     deps += [ "//apps/example/blinky:blinky_example($libc_toolchain)" ]
   } else {
