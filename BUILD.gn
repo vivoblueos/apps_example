@@ -24,5 +24,6 @@ group("check_apps") {
   } else {
     deps = [ "//apps/example/fs:fs_example($libc_toolchain)" ]
     deps += [ "//apps/example/net:net_example($libc_toolchain)" ]
+    deps += [ "//apps/example/ftp_client:ftp_client_example_test_runner($libc_toolchain)" ]
   }
 }
