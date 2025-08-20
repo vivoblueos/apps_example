@@ -16,13 +16,17 @@ import("//build/templates/rust.gni")
 import("//build/toolchain/blueos.gni")
 import("//kernel/common_crate_rustflags.gni")
 
-group("check_apps") {
-  deps = []
-  
-  if (board == "raspberry_pico2_cortexm") {
-    deps += [ "//apps/example/blinky:blinky_example($libc_toolchain)" ]
-  } else {
-    deps = [ "//apps/example/fs:fs_example($libc_toolchain)" ]
-    deps += [ "//apps/example/net:net_example($libc_toolchain)" ]
-  }
+executable("blinky_example") {
+  crate_name = "blinky_example"
+  crate_type = "bin"
+
+  sources = [ "src/main.rs" ]
+  deps = [
+    "//kernel/rsrt:rsrt_std",
+    "//librs:librs",
+  ]
+  inputs = [ "//kernel/kernel/src/boards/$board/link.x" ]
+  rustflags = []
+  rustflags += common_image_rustflags
+  rustflags += common_crate_rustflags
 }
