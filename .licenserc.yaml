@@ -62,6 +62,8 @@ header: # `header` section is configurations for source codes license header.
       - ".licenserc.yaml"
       - "**/*.lds"
       - "**/lib64"
+      - ".gitlab-ci.yml"
+      - ".gitlab/**/*.yml"
 
     comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 
