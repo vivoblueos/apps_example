@@ -15,12 +15,24 @@
 import("//build/templates/rust.gni")
 import("//build/toolchain/blueos.gni")
 
-group("check_apps") {
+executable("no_std_example") {
+  crate_name = "no_std_example"
+  crate_type = "bin"
+
+  sources = [ "src/main.rs" ]
   deps = [
-    "//apps/example/blinky:blinky_example",
-    "//apps/example/fs:fs_example",
-    "//apps/example/ftp_client:ftp_client_example_test_runner",
-    "//apps/example/net:net_example",
-    "//apps/example/no_std:no_std_example_runner",
+    "//kernel/rsrt:rsrt",
+    "//librs:librs",
+    "//kernel/kernel:blueos",
   ]
+}
+
+gen_qemu_runner("no_std_example_runner") {
+  img = ":no_std_example"
+  qemu = "$qemu_exe"
+  machine = "$machine"
+  qemu_args = qemu_extra_args
+  net_args = qemu_net_args
+  block_img = "no_std_example_block.img"
+  block_args = qemu_block_args
 }
