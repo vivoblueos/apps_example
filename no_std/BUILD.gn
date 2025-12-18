@@ -21,9 +21,9 @@ executable("no_std_example") {
 
   sources = [ "src/main.rs" ]
   deps = [
-    "//kernel/rsrt:rsrt",
-    "//librs:librs",
     "//kernel/kernel:blueos",
+    "//kernel/rsrt",
+    "//librs",
   ]
 }
 
