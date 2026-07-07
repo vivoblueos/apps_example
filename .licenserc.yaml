@@ -20,9 +20,9 @@ header: # `header` section is configurations for source codes license header.
         limitations under the License.
       # `pattern` is optional regexp if all the file headers are the same as `license` or the license of `spdx-id` and `copyright-owner`.
       pattern: |
-        Copyright (c) \d+ vivo Mobile Communication Co., Ltd.
+        Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 
-        Licensed under the Apache License, Version 2.0 \(the "License"\);
+        Licensed under the Apache License, Version 2.0 (the "License");
         you may not use this file except in compliance with the License.
         You may obtain a copy of the License at
 
