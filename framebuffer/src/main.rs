@@ -390,7 +390,11 @@ fn run_snake(fb: &mut FbFile) -> Result<()> {
     let mut food_index = next_food_index(head_index, length, path_len, food_seed);
 
     fb.clear(Rgb565::BLACK)?;
-    draw_cell(fb, loop_cell(food_index, grid_width, grid_height), Rgb565::RED)?;
+    draw_cell(
+        fb,
+        loop_cell(food_index, grid_width, grid_height),
+        Rgb565::RED,
+    )?;
     for offset in (0..length).rev() {
         let index = (head_index + path_len - offset) % path_len;
         let color = if offset == 0 {
@@ -412,16 +416,32 @@ fn run_snake(fb: &mut FbFile) -> Result<()> {
         if ate_food && length < max_len {
             length += 1;
         } else {
-            draw_cell(fb, loop_cell(old_tail_index, grid_width, grid_height), Rgb565::BLACK)?;
+            draw_cell(
+                fb,
+                loop_cell(old_tail_index, grid_width, grid_height),
+                Rgb565::BLACK,
+            )?;
         }
 
-        draw_cell(fb, loop_cell(old_head_index, grid_width, grid_height), Rgb565::GREEN)?;
-        draw_cell(fb, loop_cell(head_index, grid_width, grid_height), Rgb565::YELLOW)?;
+        draw_cell(
+            fb,
+            loop_cell(old_head_index, grid_width, grid_height),
+            Rgb565::GREEN,
+        )?;
+        draw_cell(
+            fb,
+            loop_cell(head_index, grid_width, grid_height),
+            Rgb565::YELLOW,
+        )?;
 
         if ate_food {
             food_seed += 1;
             food_index = next_food_index(head_index, length, path_len, food_seed);
-            draw_cell(fb, loop_cell(food_index, grid_width, grid_height), Rgb565::RED)?;
+            draw_cell(
+                fb,
+                loop_cell(food_index, grid_width, grid_height),
+                Rgb565::RED,
+            )?;
         }
     }
 }
