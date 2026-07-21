@@ -28,7 +28,14 @@ const PHONE_TCP_SERVER_PORT: u16 = 34228;
 const TCP_TEST_PAYLOAD: &[u8] = b"blueos-wifi-tcp-link-test";
 const TCP_RECV_EXPECTED_MESSAGES: usize = 2;
 const TCP_RECV_BUF_SIZE: usize = 512;
+const HTTPS_SERVER_NAME: &str =  "api.openai.com";
+const HTTPS_SERVER_PORT: u16 = 443;
+const HTTPS_REQUEST_PATH: &str = "/v1/models";
+const TLS_RECORD_BUF_SIZE: usize = 16640;
+const HTTPS_RECV_BUF_SIZE: usize = 4096;
 
+extern crate embedded_io_adapters;
+extern crate fastrand;
 extern crate librs;
 extern crate rsrt;
 
@@ -135,6 +142,116 @@ fn run_phone_tcp_check() -> std::io::Result<()> {
     Ok(())
 }
 
+extern crate embedded_tls;
+use embedded_io_adapters::std::FromStd;
+use embedded_tls::blocking::*;
+use rand_core::{CryptoRng, RngCore};
+
+struct SimpleRng(fastrand::Rng);
+
+impl RngCore for SimpleRng {
+    fn next_u32(&mut self) -> u32 {
+        self.0.u32(..)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0.u64(..)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.fill(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.0.fill(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for SimpleRng {}
+
+fn run_phone_https_check() -> std::io::Result<()> {
+    let addr = SocketAddrV4::new(Ipv4Addr::new(172,66,0,243), HTTPS_SERVER_PORT);
+    println!(
+        "HTTPS check: connecting to {} (SNI: {})",
+        addr, HTTPS_SERVER_NAME
+    );
+
+    let stream = TcpStream::connect(addr)?;
+    println!("HTTPS TCP connected");
+
+    let mut read_record_buffer = vec![0u8; TLS_RECORD_BUF_SIZE];
+    let mut write_record_buffer = vec![0u8; TLS_RECORD_BUF_SIZE];
+
+    println!("buffer allocated");
+
+    let config = TlsConfig::new().with_server_name(HTTPS_SERVER_NAME);
+    //let config = TlsConfig::new();
+    let mut tls: TlsConnection<FromStd<TcpStream>, Aes128GcmSha256> = TlsConnection::new(
+        FromStd::new(stream),
+        &mut read_record_buffer[..],
+        &mut write_record_buffer[..],
+    );
+
+    println!("tlsconfig finished");
+
+    let mut rng = SimpleRng(fastrand::Rng::with_seed(0xDEAD_BEEF_CAFE_BABE));
+    println!("rng finished");
+    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut rng))
+        .map_err(|e| {
+            println!("TLS handshake failed: {:?}", e);
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "TLS handshake failed")
+        })?;
+
+    println!("TLS handshake OK, sending HTTPS request");
+
+    let request = format!(
+        "GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        HTTPS_REQUEST_PATH, HTTPS_SERVER_NAME
+    );
+    tls.write(request.as_bytes())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("TLS write: {:?}", e)))?;
+    tls.flush()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("TLS flush: {:?}", e)))?;
+
+    println!("HTTPS request sent, reading response...");
+
+    let mut rx_buf = vec![0u8; HTTPS_RECV_BUF_SIZE];
+    let mut total_read = 0usize;
+    loop {
+        match tls.read(&mut rx_buf[total_read..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                total_read += n;
+                if total_read >= rx_buf.len() {
+                    break;
+                }
+            }
+            Err(e) => {
+                println!("TLS read error: {:?}", e);
+                break;
+            }
+        }
+    }
+
+    if total_read > 0 {
+        println!(
+            "HTTPS response ({} bytes):\n{}",
+            total_read,
+            core::str::from_utf8(&rx_buf[..total_read]).unwrap_or("<invalid utf8>")
+        );
+    } else {
+        println!("HTTPS response: no data received");
+    }
+
+    match tls.close() {
+        Ok(_sock) => println!("TLS connection closed"),
+        Err((_, e)) => println!("TLS close error: {:?}", e),
+    }
+
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     let _d = librs::time::msleep(1000);
 
@@ -193,7 +310,7 @@ fn main() -> std::io::Result<()> {
     println!("Scan triggered.");
 
     // SIOCGIWSCAN: retrieve results into a 4 KiB buffer
-    let mut buf = [0u8; 4096];
+    let mut buf = vec![0u8; 4096];
     let data = libc::iw_point {
         pointer: buf.as_mut_ptr() as *mut libc::c_void,
         length: buf.len() as u16,
@@ -354,5 +471,6 @@ fn main() -> std::io::Result<()> {
     println!("WiFi connect triggered, waiting for station connection...");
     let _ = librs::time::msleep(WIFI_CONNECT_WAIT_MS);
     run_phone_tcp_check();
+    run_phone_https_check();
     Ok(())
 }
