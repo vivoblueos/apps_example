@@ -33,6 +33,10 @@ reload_autoconf_and_build("wifi_example") {
     "//kernel/rsrt:rsrt_std",
     "//libc",
     "//librs",
+    "//external/vendor/embedded-tls-0.16.3:embedded_tls",
+    "//external/vendor/embedded-io-adapters-0.6.2:embedded_io_adapters",
+    "//external/vendor/fastrand-2.3.0:fastrand",
+    "//external/vendor/rand_core-0.6.4:rand_core",
   ]
   linker_script = default_linker_script
   configs = [ "//build/boards/${board}:kernel_config" ]
@@ -61,6 +65,7 @@ reload_autoconf_and_build("wifi_example") {
     "-lregulatory",
     "-lphy",
     "-lpp",
+    # "-lembedded_tls",
   ]
   rustflags = []
   foreach(item, wifi_ldflags) {
