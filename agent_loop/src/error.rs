@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ pub enum Error<E> {
     Serialize(serde_json::Error),
     Deserialize {
         source: serde_json::Error,
-        body: Vec<u8>,
+        body_len: usize,
     },
     Api {
         status: u16,
@@ -93,8 +93,13 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Self::Api {
                 status,
                 error: None,
-                ..
-            } => write!(f, "OpenAI API returned HTTP {status}"),
+                body,
+            } => match core::str::from_utf8(body) {
+                Ok(body) if !body.is_empty() => {
+                    write!(f, "OpenAI API returned HTTP {status}: {body}")
+                }
+                _ => write!(f, "OpenAI API returned HTTP {status}"),
+            },
             Self::ResponseTooLarge { limit } => {
                 write!(
                     f,
@@ -106,8 +111,6 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ConfigError {}
 
-#[cfg(feature = "std")]
 impl<E> std::error::Error for Error<E> where E: std::error::Error + 'static {}

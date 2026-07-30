@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -134,9 +134,9 @@ impl<B: HttpBody> SseStream<B> {
                         limit: self.max_event_size,
                     });
                 }
-                let event = self.buffer[..index].to_vec();
+                let event = parse_event(&self.buffer[..index])?;
                 self.buffer.drain(..index + delimiter_len);
-                if let Some(event) = parse_event(&event)? {
+                if let Some(event) = event {
                     return Ok(Some(event));
                 }
                 continue;
