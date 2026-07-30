@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write;
+use embedded_io::Write as _;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
@@ -38,6 +39,22 @@ pub const DEFAULT_API_ENDPOINT: &str = "https://api.openai.com/v1";
 const DEFAULT_MAX_RESPONSE_BODY_SIZE: usize = 1024 * 1024;
 const DEFAULT_MAX_RESPONSE_HEADER_SIZE: usize = 16 * 1024;
 const READ_BUFFER_SIZE: usize = 1024;
+
+pub trait StreamingRequest: Serialize {
+    fn stream_mut(&mut self) -> &mut Option<bool>;
+}
+
+impl<'a> StreamingRequest for ChatCompletionRequest<'a> {
+    fn stream_mut(&mut self) -> &mut Option<bool> {
+        &mut self.stream
+    }
+}
+
+impl StreamingRequest for CreateResponseRequest {
+    fn stream_mut(&mut self) -> &mut Option<bool> {
+        &mut self.stream
+    }
+}
 
 #[derive(Debug)]
 pub struct ApiResponse<T> {
@@ -188,10 +205,10 @@ impl<T> ClientBuilder<T> {
             validate_header(header)?;
         }
         if let Some(organization) = &self.organization {
-            validate_header(&Header::new("OpenAI-Organization", organization.clone()))?;
+            validate_header_value("OpenAI-Organization", organization)?;
         }
         if let Some(project) = &self.project {
-            validate_header(&Header::new("OpenAI-Project", project.clone()))?;
+            validate_header_value("OpenAI-Project", project)?;
         }
 
         Ok(Client {
@@ -256,8 +273,9 @@ impl<T: SocketTransport> Client<T> {
     where
         R: DeserializeOwned,
     {
-        let response = self.send_buffered(Method::Get, path, &[], false)?;
-        decode_json(response)
+        let max_response_body_size = self.max_response_body_size;
+        let response = self.send_http(Method::Get, path, None, false, None, |_| Ok(()))?;
+        decode_json(response, max_response_body_size)
     }
 
     pub fn post_json<Q, R>(
@@ -269,17 +287,18 @@ impl<T: SocketTransport> Client<T> {
         Q: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let body = serde_json::to_vec(request).map_err(Error::Serialize)?;
-        let response = self.send_buffered(Method::Post, path, &body, true)?;
-        decode_json(response)
+        let max_response_body_size = self.max_response_body_size;
+        let response = self.send_json(Method::Post, path, request, false)?;
+        decode_json(response, max_response_body_size)
     }
 
     pub fn delete_json<R>(&mut self, path: &str) -> Result<ApiResponse<R>, Error<T::Error>>
     where
         R: DeserializeOwned,
     {
-        let response = self.send_buffered(Method::Delete, path, &[], false)?;
-        decode_json(response)
+        let max_response_body_size = self.max_response_body_size;
+        let response = self.send_http(Method::Delete, path, None, false, None, |_| Ok(()))?;
+        decode_json(response, max_response_body_size)
     }
 
     pub fn send_raw(
@@ -295,13 +314,27 @@ impl<T: SocketTransport> Client<T> {
     pub fn post_json_stream<'a, Q>(
         &'a mut self,
         path: &str,
-        request: &Q,
+        request: &mut Q,
     ) -> Result<ApiStream<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>>
     where
-        Q: Serialize + ?Sized,
+        Q: StreamingRequest + ?Sized,
     {
-        let body = stream_json_body(request)?;
-        self.send_stream(path, &body)
+        let max_response_body_size = self.max_response_body_size;
+        let previous_stream = request.stream_mut().replace(true);
+        let response = self.send_json(Method::Post, path, request, true);
+        *request.stream_mut() = previous_stream;
+
+        let response = response?;
+        if !(200..300).contains(&response.status) {
+            let status = response.status;
+            let body = read_body(response.body, max_response_body_size)?;
+            return Err(api_error(status, body));
+        }
+        Ok(ApiStream::new(
+            response.status,
+            response.headers,
+            response.body,
+        ))
     }
 
     pub fn create_response(
@@ -313,7 +346,7 @@ impl<T: SocketTransport> Client<T> {
 
     pub fn create_response_stream<'a>(
         &'a mut self,
-        request: &CreateResponseRequest,
+        request: &mut CreateResponseRequest,
     ) -> Result<ApiStream<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>> {
         self.post_json_stream("responses", request)
     }
@@ -351,14 +384,14 @@ impl<T: SocketTransport> Client<T> {
 
     pub fn chat_completion(
         &mut self,
-        request: &ChatCompletionRequest,
+        request: &ChatCompletionRequest<'_>,
     ) -> Result<ApiResponse<ChatCompletionResponse>, Error<T::Error>> {
         self.post_json("chat/completions", request)
     }
 
     pub fn chat_completion_stream<'a>(
         &'a mut self,
-        request: &ChatCompletionRequest,
+        request: &mut ChatCompletionRequest<'_>,
     ) -> Result<ApiStream<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>> {
         self.post_json_stream("chat/completions", request)
     }
@@ -404,14 +437,13 @@ impl<T: SocketTransport> Client<T> {
         content_type: Option<&str>,
     ) -> Result<ApiResponse<Vec<u8>>, Error<T::Error>> {
         let max_response_body_size = self.max_response_body_size;
-        let response = self.send_http(
-            method,
-            path,
-            body,
-            content_type,
-            false,
-            method == Method::Post || content_type.is_some() || !body.is_empty(),
-        )?;
+        let body_len = (method == Method::Post || content_type.is_some() || !body.is_empty())
+            .then_some(body.len());
+        let response = self.send_http(method, path, content_type, false, body_len, |socket| {
+            socket
+                .write_all(body)
+                .map_err(|error| Error::Http(HttpError::Transport(error)))
+        })?;
         let status = response.status;
         let headers = response.headers;
         let body = read_body(response.body, max_response_body_size)?;
@@ -425,126 +457,155 @@ impl<T: SocketTransport> Client<T> {
         })
     }
 
-    fn send_stream<'a>(
-        &'a mut self,
-        path: &str,
-        body: &[u8],
-    ) -> Result<ApiStream<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>> {
-        let max_response_body_size = self.max_response_body_size;
-        let response = self.send_http(
-            Method::Post,
-            path,
-            body,
-            Some("application/json"),
-            true,
-            true,
-        )?;
-        if !(200..300).contains(&response.status) {
-            let status = response.status;
-            let body = read_body(response.body, max_response_body_size)?;
-            return Err(api_error(status, body));
-        }
-        Ok(ApiStream::new(
-            response.status,
-            response.headers,
-            response.body,
-        ))
-    }
-
-    fn send_http<'a>(
+    fn send_json<'a, Q>(
         &'a mut self,
         method: Method,
         path: &str,
-        body: &[u8],
-        content_type: Option<&str>,
+        request: &Q,
         stream: bool,
-        body_present: bool,
-    ) -> Result<Response<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>> {
-        let target = self.build_target(path)?;
-        let headers = self.build_headers(content_type, stream);
-        let host = self.endpoint.host.clone();
-        let authority = self
-            .host_header
-            .clone()
-            .unwrap_or_else(|| self.endpoint.authority.clone());
-        let port = self.endpoint.port;
-        let scheme = self.endpoint.scheme;
-        let socket = self
-            .transport
-            .connect(&host, port, scheme)
-            .map_err(|error| Error::Http(HttpError::Transport(error)))?;
-        http::send_request(
-            socket,
-            Request {
-                method,
-                target: &target,
-                host: &authority,
-                headers: &headers,
-                body: body_present.then_some(body),
-            },
-            self.max_response_header_size,
+    ) -> Result<Response<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>>
+    where
+        Q: Serialize + ?Sized,
+    {
+        let body_len = json_body_len(request)?;
+        self.send_http(
+            method,
+            path,
+            Some("application/json"),
+            stream,
+            Some(body_len),
+            |socket| write_json(socket, request),
         )
-        .map_err(Error::Http)
     }
 
-    fn build_target(&self, path: &str) -> Result<String, Error<T::Error>> {
+    fn send_http<'a, F>(
+        &'a mut self,
+        method: Method,
+        path: &str,
+        content_type: Option<&str>,
+        stream: bool,
+        body_len: Option<usize>,
+        write_body: F,
+    ) -> Result<Response<HttpResponseBody<T::Socket<'a>>>, Error<T::Error>>
+    where
+        F: FnOnce(&mut T::Socket<'a>) -> Result<(), Error<T::Error>>,
+    {
         if contains_line_break(path) {
             return Err(Error::InvalidPath);
         }
         let path = path.trim_start_matches('/');
-        if self.endpoint.base_path.is_empty() {
-            Ok(format!("/{path}"))
-        } else if path.is_empty() {
-            Ok(self.endpoint.base_path.clone())
-        } else {
-            Ok(format!("{}/{path}", self.endpoint.base_path))
+        let Client {
+            transport,
+            endpoint,
+            api_key,
+            organization,
+            project,
+            headers,
+            host_header,
+            max_response_header_size,
+            ..
+        } = self;
+        let socket = transport
+            .connect(endpoint.host.as_str(), endpoint.port, endpoint.scheme)
+            .map_err(|error| Error::Http(HttpError::Transport(error)))?;
+        let request = Request {
+            method,
+            base_path: endpoint.base_path.as_str(),
+            path,
+            host: host_header
+                .as_deref()
+                .unwrap_or(endpoint.authority.as_str()),
+            headers,
+            accept: if stream {
+                "text/event-stream"
+            } else {
+                "application/json"
+            },
+            content_type,
+            bearer_token: api_key.as_deref(),
+            organization: organization.as_deref(),
+            project: project.as_deref(),
+            body_len,
+        };
+        match http::send_request_with_body(socket, request, *max_response_header_size, write_body) {
+            Ok(response) => Ok(response),
+            Err(http::SendRequestError::Http(error)) => Err(Error::Http(error)),
+            Err(http::SendRequestError::Body(error)) => Err(error),
         }
-    }
-
-    fn build_headers(&self, content_type: Option<&str>, stream: bool) -> Vec<Header> {
-        let mut headers = self.headers.clone();
-        upsert_header(
-            &mut headers,
-            Header::new(
-                "Accept",
-                if stream {
-                    "text/event-stream"
-                } else {
-                    "application/json"
-                },
-            ),
-        );
-        if let Some(content_type) = content_type {
-            upsert_header(&mut headers, Header::new("Content-Type", content_type));
-        }
-        if let Some(api_key) = &self.api_key {
-            upsert_header(
-                &mut headers,
-                Header::new("Authorization", format!("Bearer {api_key}")),
-            );
-        }
-        if let Some(organization) = &self.organization {
-            upsert_header(
-                &mut headers,
-                Header::new("OpenAI-Organization", organization.clone()),
-            );
-        }
-        if let Some(project) = &self.project {
-            upsert_header(&mut headers, Header::new("OpenAI-Project", project.clone()));
-        }
-        headers
     }
 }
 
-fn stream_json_body<Q: Serialize + ?Sized, E>(request: &Q) -> Result<Vec<u8>, Error<E>> {
-    let mut value = serde_json::to_value(request).map_err(Error::Serialize)?;
-    let object = value.as_object_mut().ok_or_else(|| {
-        Error::Serialize(<serde_json::Error as serde::ser::Error>::custom(
-            "streaming request must serialize to a JSON object",
-        ))
-    })?;
-    object.insert(String::from("stream"), serde_json::Value::Bool(true));
-    serde_json::to_vec(&value).map_err(Error::Serialize)
+fn json_body_len<Q: Serialize + ?Sized, E>(request: &Q) -> Result<usize, Error<E>> {
+    let mut writer = CountingWriter::default();
+    serde_json::to_writer(&mut writer, request).map_err(Error::Serialize)?;
+    if writer.overflowed {
+        return Err(Error::Serialize(
+            <serde_json::Error as serde::ser::Error>::custom("request JSON exceeds usize"),
+        ));
+    }
+    Ok(writer.len)
+}
+
+fn write_json<S, Q, E>(socket: &mut S, request: &Q) -> Result<(), Error<E>>
+where
+    S: embedded_io::Write<Error = E>,
+    Q: Serialize + ?Sized,
+{
+    let mut writer = JsonSocketWriter::new(socket);
+    let serialization = serde_json::to_writer(&mut writer, request);
+    if let Some(error) = writer.error {
+        return Err(Error::Http(HttpError::Transport(error)));
+    }
+    serialization.map_err(Error::Serialize)
+}
+
+#[derive(Default)]
+struct CountingWriter {
+    len: usize,
+    overflowed: bool,
+}
+
+impl std::io::Write for CountingWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self.len.checked_add(buffer.len()) {
+            Some(len) => self.len = len,
+            None => self.overflowed = true,
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct JsonSocketWriter<'a, S: embedded_io::Write> {
+    socket: &'a mut S,
+    error: Option<S::Error>,
+}
+
+impl<'a, S: embedded_io::Write> JsonSocketWriter<'a, S> {
+    fn new(socket: &'a mut S) -> Self {
+        Self {
+            socket,
+            error: None,
+        }
+    }
+}
+
+impl<S: embedded_io::Write> std::io::Write for JsonSocketWriter<'_, S> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.error.is_none() {
+            if let Err(error) = self.socket.write_all(buffer) {
+                self.error = Some(error);
+            }
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn read_body<B, E>(mut body: B, limit: usize) -> Result<Vec<u8>, Error<E>>
@@ -571,20 +632,88 @@ where
     }
 }
 
-fn decode_json<T, E>(response: ApiResponse<Vec<u8>>) -> Result<ApiResponse<T>, Error<E>>
+fn decode_json<T, B, E>(response: Response<B>, limit: usize) -> Result<ApiResponse<T>, Error<E>>
 where
     T: DeserializeOwned,
+    B: HttpBody<Error = HttpError<E>>,
 {
-    match serde_json::from_slice(&response.data) {
+    let Response {
+        status,
+        headers,
+        body,
+    } = response;
+    let mut reader = JsonBodyReader::new(body, limit);
+    let data = serde_json::from_reader(&mut reader);
+    if let Some(error) = reader.error.take() {
+        return Err(Error::Http(error));
+    }
+    if reader.exceeded_limit {
+        return Err(Error::ResponseTooLarge { limit });
+    }
+    match data {
         Ok(data) => Ok(ApiResponse {
-            status: response.status,
-            headers: response.headers,
+            status,
+            headers,
             data,
         }),
         Err(source) => Err(Error::Deserialize {
             source,
-            body: response.data,
+            body_len: reader.body_len,
         }),
+    }
+}
+
+struct JsonBodyReader<B: HttpBody> {
+    body: B,
+    limit: usize,
+    body_len: usize,
+    error: Option<B::Error>,
+    exceeded_limit: bool,
+}
+
+impl<B: HttpBody> JsonBodyReader<B> {
+    fn new(body: B, limit: usize) -> Self {
+        Self {
+            body,
+            limit,
+            body_len: 0,
+            error: None,
+            exceeded_limit: false,
+        }
+    }
+}
+
+impl<B: HttpBody> std::io::Read for JsonBodyReader<B> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() || self.error.is_some() || self.exceeded_limit {
+            return Ok(0);
+        }
+        if self.body_len == self.limit {
+            let mut byte = [0u8; 1];
+            match self.body.read(&mut byte) {
+                Ok(0) => return Ok(0),
+                Ok(_) => {
+                    self.exceeded_limit = true;
+                    return Ok(0);
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return Ok(0);
+                }
+            }
+        }
+
+        let max = (self.limit - self.body_len).min(buffer.len());
+        match self.body.read(&mut buffer[..max]) {
+            Ok(count) => {
+                self.body_len += count;
+                Ok(count)
+            }
+            Err(error) => {
+                self.error = Some(error);
+                Ok(0)
+            }
+        }
     }
 }
 
@@ -633,16 +762,19 @@ fn parse_authority(authority: &str, default_port: u16) -> Result<(String, u16), 
 }
 
 fn validate_header(header: &Header) -> Result<(), ConfigError> {
-    if header.name.is_empty()
-        || !header
-            .name
+    validate_header_value(&header.name, &header.value)
+}
+
+fn validate_header_value(name: &str, value: &str) -> Result<(), ConfigError> {
+    if name.is_empty()
+        || !name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     {
-        return Err(ConfigError::InvalidHeaderName(header.name.clone()));
+        return Err(ConfigError::InvalidHeaderName(String::from(name)));
     }
-    if contains_line_break(&header.value) {
-        return Err(ConfigError::InvalidHeaderValue(header.name.clone()));
+    if contains_line_break(value) {
+        return Err(ConfigError::InvalidHeaderValue(String::from(name)));
     }
     Ok(())
 }

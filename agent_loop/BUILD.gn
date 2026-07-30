@@ -23,6 +23,7 @@ reload_autoconf_and_build("agent_loop") {
   crate_type = "bin"
 
   sources = [ "src/main.rs" ]
+  inputs = [ "capabilities.json" ]
   deps = [
     "//kernel/adapter/esp_radio_sys",
     "//kernel/kconfig:blueos_kconfig",

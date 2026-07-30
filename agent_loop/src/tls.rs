@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,12 +15,13 @@
 extern crate embedded_tls;
 use alloc::{format, string::String, vec, vec::Vec};
 use embedded_io::{ErrorType, Read, Write};
-use embedded_io_adapters::std::{FromStd, to_std_error};
+use embedded_io_adapters::std::{to_std_error, FromStd};
 use embedded_tls::blocking::*;
 use rand_core::{CryptoRng, RngCore};
 use std::net::TcpStream;
 
-const TLS_RECORD_BUF_SIZE: usize = 16640;
+const TLS_READ_RECORD_BUF_SIZE: usize = 16640;
+const TLS_WRITE_RECORD_BUF_SIZE: usize = 4096;
 
 struct SimpleRng(fastrand::Rng);
 
@@ -113,8 +114,8 @@ pub struct EmbeddedTlsTransport {
 impl EmbeddedTlsTransport {
     pub fn new() -> Self {
         Self {
-            read_buf: vec![0u8; TLS_RECORD_BUF_SIZE],
-            write_buf: vec![0u8; TLS_RECORD_BUF_SIZE],
+            read_buf: vec![0u8; TLS_READ_RECORD_BUF_SIZE],
+            write_buf: vec![0u8; TLS_WRITE_RECORD_BUF_SIZE],
             rng: SimpleRng(fastrand::Rng::with_seed(0xDEAD_BEEF_CAFE_BABE)),
             sni: None,
         }
@@ -143,7 +144,8 @@ impl crate::http::SocketTransport for EmbeddedTlsTransport {
         scheme: crate::http::Scheme,
     ) -> Result<Self::Socket<'a>, Self::Error> {
         println!("[http] connecting to {}:{}...", host, port);
-        let stream = TcpStream::connect(("124.72.129.70", port))?;
+        // let stream = TcpStream::connect(("124.72.129.70", port))?;
+        let stream = TcpStream::connect((host, port))?;
         stream.set_nodelay(true)?;
         println!("[http] TCP connected");
 
@@ -153,27 +155,33 @@ impl crate::http::SocketTransport for EmbeddedTlsTransport {
                 let server_name = self.sni.as_deref().unwrap_or(host);
                 let write_buf_ptr = self.write_buf.as_ptr();
                 let read_buf_ptr = self.read_buf.as_ptr();
-                let mut tls: TlsConnection<FromStd<TcpStream>, Aes128GcmSha256> = TlsConnection::new(
-                    FromStd::new(stream),
-                    &mut self.read_buf[..],
-                    &mut self.write_buf[..],
-                );
+                let mut tls: TlsConnection<FromStd<TcpStream>, Aes128GcmSha256> =
+                    TlsConnection::new(
+                        FromStd::new(stream),
+                        &mut self.read_buf[..],
+                        &mut self.write_buf[..],
+                    );
 
                 let config = TlsConfig::new()
                     .with_server_name(server_name)
                     .enable_rsa_signatures();
                 println!("[http] TLS handshake...");
-                let result = tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut self.rng));
+                let result =
+                    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut self.rng));
                 if let Err(ref e) = result {
                     println!("[http] TLS handshake failed: {:?}", e);
                     let wbuf = unsafe { core::slice::from_raw_parts(write_buf_ptr, 200) };
                     let rbuf = unsafe { core::slice::from_raw_parts(read_buf_ptr, 64) };
-                    let w_hex: String = wbuf.iter().map(|b| format!("{:02x}", b)).collect();
-                    let r_hex: String = rbuf.iter().map(|b| format!("{:02x}", b)).collect();
                     println!("[tls] ClientHello (write_buf first 200 bytes):");
-                    println!("[tls] {}", w_hex);
+                    for byte in wbuf {
+                        print!("{byte:02x}");
+                    }
+                    println!();
                     println!("[tls] server response (read_buf first 64 bytes):");
-                    println!("[tls] {}", r_hex);
+                    for byte in rbuf {
+                        print!("{byte:02x}");
+                    }
+                    println!();
                 }
                 result.map_err(|e| {
                     std::io::Error::new(

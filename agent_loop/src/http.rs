@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ use alloc::{string::String, vec::Vec};
 use core::{convert::Infallible, fmt, str};
 use embedded_io::{Read, Write};
 
-const MAX_HEADERS: usize = 64;
+const MAX_HEADERS: usize = 32;
 const MAX_CHUNK_LINE_SIZE: usize = 128;
 const MAX_TRAILER_SIZE: usize = 8 * 1024;
 const READ_BUFFER_SIZE: usize = 1024;
@@ -90,23 +90,31 @@ impl fmt::Debug for Header {
 /// A complete HTTP request at the socket boundary.
 pub struct Request<'a> {
     pub method: Method,
-    /// Origin-form request target, for example `/v1/responses?limit=10`.
-    pub target: &'a str,
+    /// Endpoint path prefix, for example `/v1`.
+    pub base_path: &'a str,
+    /// Request path without a leading slash, for example `responses`.
+    pub path: &'a str,
     /// Value for the HTTP `Host` header.
     pub host: &'a str,
     pub headers: &'a [Header],
-    /// `None` omits `Content-Length`; `Some(&[])` sends `Content-Length: 0`.
-    pub body: Option<&'a [u8]>,
+    pub accept: &'a str,
+    pub content_type: Option<&'a str>,
+    pub bearer_token: Option<&'a str>,
+    pub organization: Option<&'a str>,
+    pub project: Option<&'a str>,
+    /// `None` omits `Content-Length`; `Some(0)` sends `Content-Length: 0`.
+    pub body_len: Option<usize>,
 }
 
 impl fmt::Debug for Request<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Request")
             .field("method", &self.method)
-            .field("target", &self.target)
+            .field("base_path", &self.base_path)
+            .field("path", &self.path)
             .field("host", &self.host)
             .field("headers", &self.headers)
-            .field("body_len", &self.body.map(<[u8]>::len))
+            .field("body_len", &self.body_len)
             .finish()
     }
 }
@@ -285,28 +293,52 @@ where
         Ok(())
     }
 
-    fn read_crlf_line(&mut self, limit: usize) -> Result<Vec<u8>, HttpError<S::Error>> {
-        let mut line = Vec::new();
+    fn read_crlf_line(&mut self, line: &mut [u8]) -> Result<usize, HttpError<S::Error>> {
+        let mut len = 0;
         loop {
             let mut byte = [0u8; 1];
             self.read_raw_exact(&mut byte)?;
             if byte[0] == b'\n' {
-                if line.last() != Some(&b'\r') {
+                if len == 0 || line[len - 1] != b'\r' {
                     return Err(HttpError::InvalidChunk);
                 }
-                line.pop();
-                return Ok(line);
+                return Ok(len - 1);
             }
-            if line.len() == limit {
+            if len == line.len() {
                 return Err(HttpError::InvalidChunk);
             }
-            line.push(byte[0]);
+            line[len] = byte[0];
+            len += 1;
+        }
+    }
+
+    fn discard_crlf_line(&mut self, limit: usize) -> Result<usize, HttpError<S::Error>> {
+        let mut len = 0;
+        let mut previous = None;
+        loop {
+            let mut byte = [0u8; 1];
+            self.read_raw_exact(&mut byte)?;
+            if byte[0] == b'\n' {
+                if previous != Some(b'\r') {
+                    return Err(HttpError::InvalidChunk);
+                }
+                return Ok(len - 1);
+            }
+            if len == limit {
+                return Err(HttpError::InvalidChunk);
+            }
+            previous = Some(byte[0]);
+            len += 1;
         }
     }
 
     fn read_chunk_size(&mut self) -> Result<usize, HttpError<S::Error>> {
-        let line = self.read_crlf_line(MAX_CHUNK_LINE_SIZE)?;
-        let size = line.split(|byte| *byte == b';').next().unwrap_or_default();
+        let mut line = [0u8; MAX_CHUNK_LINE_SIZE];
+        let len = self.read_crlf_line(&mut line)?;
+        let size = line[..len]
+            .split(|byte| *byte == b';')
+            .next()
+            .unwrap_or_default();
         let size = str::from_utf8(size)
             .map_err(|_| HttpError::InvalidChunk)?
             .trim();
@@ -349,14 +381,14 @@ where
                     self.framing = BodyFraming::Chunked(ChunkState::Size);
                 }
                 BodyFraming::Chunked(ChunkState::Trailers(total)) => {
-                    let line = self.read_crlf_line(MAX_TRAILER_SIZE)?;
-                    let total = total.saturating_add(line.len() + 2);
+                    let len = self.discard_crlf_line(MAX_TRAILER_SIZE)?;
+                    let total = total.saturating_add(len + 2);
                     if total > MAX_TRAILER_SIZE {
                         return Err(HttpError::HeaderTooLarge {
                             limit: MAX_TRAILER_SIZE,
                         });
                     }
-                    self.framing = if line.is_empty() {
+                    self.framing = if len == 0 {
                         BodyFraming::Chunked(ChunkState::Done)
                     } else {
                         BodyFraming::Chunked(ChunkState::Trailers(total))
@@ -398,37 +430,38 @@ where
     }
 }
 
+pub enum SendRequestError<E, B> {
+    Http(HttpError<E>),
+    Body(B),
+}
+
 /// Writes one HTTP/1.1 request and parses the response from a connected socket.
-pub fn send_request<S>(
+pub fn send_request_with_body<S, B, F>(
     mut socket: S,
     request: Request<'_>,
     max_header_size: usize,
-) -> Result<Response<HttpResponseBody<S>>, HttpError<S::Error>>
+    write_body: F,
+) -> Result<Response<HttpResponseBody<S>>, SendRequestError<S::Error, B>>
 where
     S: Read + Write,
+    F: FnOnce(&mut S) -> Result<(), B>,
 {
-    write_request(&mut socket, &request)?;
-    socket.flush().map_err(HttpError::Transport)?;
-    let body_len = request.body.map(|b| b.len()).unwrap_or(0);
-    println!(
-        "[http] {} {} sent, waiting for response...{}",
-        request.method.as_str(),
-        request.target,
-        if body_len > 0 {
-            format!(" ({} bytes body)", body_len)
-        } else {
-            String::new()
-        }
-    );
-    read_response(socket, max_header_size)
+    write_request_head(&mut socket, &request).map_err(SendRequestError::Http)?;
+    write_body(&mut socket).map_err(SendRequestError::Body)?;
+    socket
+        .flush()
+        .map_err(|error| SendRequestError::Http(HttpError::Transport(error)))?;
+    log_request_sent(&request);
+    read_response(socket, max_header_size).map_err(SendRequestError::Http)
 }
 
-fn write_request<S>(socket: &mut S, request: &Request<'_>) -> Result<(), HttpError<S::Error>>
+fn write_request_head<S>(socket: &mut S, request: &Request<'_>) -> Result<(), HttpError<S::Error>>
 where
     S: Write,
 {
-    if !request.target.starts_with('/')
-        || contains_line_break(request.target)
+    if (!request.base_path.is_empty() && !request.base_path.starts_with('/'))
+        || contains_line_break(request.base_path)
+        || contains_line_break(request.path)
         || request.host.is_empty()
         || contains_line_break(request.host)
     {
@@ -437,14 +470,14 @@ where
 
     write_bytes(socket, request.method.as_str().as_bytes())?;
     write_bytes(socket, b" ")?;
-    write_bytes(socket, request.target.as_bytes())?;
+    write_target(socket, request.base_path, request.path)?;
     write_bytes(socket, b" HTTP/1.1\r\nHost: ")?;
     write_bytes(socket, request.host.as_bytes())?;
     write_bytes(socket, b"\r\nConnection: close\r\n")?;
 
-    if let Some(body) = request.body {
+    if let Some(body_len) = request.body_len {
         socket
-            .write_fmt(format_args!("Content-Length: {}\r\n", body.len()))
+            .write_fmt(format_args!("Content-Length: {body_len}\r\n"))
             .map_err(|error| match error {
                 embedded_io::WriteFmtError::Other(error) => HttpError::Transport(error),
                 embedded_io::WriteFmtError::FmtError => HttpError::InvalidRequest,
@@ -452,27 +485,96 @@ where
     }
 
     for header in request.headers {
-        if header.name.is_empty()
-            || contains_line_break(&header.name)
-            || contains_line_break(&header.value)
-            || header.is_name("host")
-            || header.is_name("connection")
-            || header.is_name("content-length")
-            || header.is_name("transfer-encoding")
-        {
-            return Err(HttpError::InvalidRequest);
+        validate_request_header(header)?;
+        if !is_replaced_header(header, request) {
+            write_header(socket, &header.name, &header.value)?;
         }
-        write_bytes(socket, header.name.as_bytes())?;
-        write_bytes(socket, b": ")?;
-        write_bytes(socket, header.value.as_bytes())?;
-        write_bytes(socket, b"\r\n")?;
     }
 
+    write_header(socket, "Accept", request.accept)?;
+    if let Some(content_type) = request.content_type {
+        write_header(socket, "Content-Type", content_type)?;
+    }
+    if let Some(api_key) = request.bearer_token {
+        write_bytes(socket, b"Authorization: Bearer ")?;
+        write_bytes(socket, api_key.as_bytes())?;
+        write_bytes(socket, b"\r\n")?;
+    }
+    if let Some(organization) = request.organization {
+        write_header(socket, "OpenAI-Organization", organization)?;
+    }
+    if let Some(project) = request.project {
+        write_header(socket, "OpenAI-Project", project)?;
+    }
     write_bytes(socket, b"\r\n")?;
-    if let Some(body) = request.body {
-        write_bytes(socket, body)?;
+    Ok(())
+}
+
+fn write_target<S>(socket: &mut S, base_path: &str, path: &str) -> Result<(), HttpError<S::Error>>
+where
+    S: Write,
+{
+    if base_path.is_empty() {
+        write_bytes(socket, b"/")?;
+        write_bytes(socket, path.as_bytes())?;
+    } else {
+        write_bytes(socket, base_path.as_bytes())?;
+        if !path.is_empty() {
+            write_bytes(socket, b"/")?;
+            write_bytes(socket, path.as_bytes())?;
+        }
     }
     Ok(())
+}
+
+fn write_header<S>(socket: &mut S, name: &str, value: &str) -> Result<(), HttpError<S::Error>>
+where
+    S: Write,
+{
+    write_bytes(socket, name.as_bytes())?;
+    write_bytes(socket, b": ")?;
+    write_bytes(socket, value.as_bytes())?;
+    write_bytes(socket, b"\r\n")
+}
+
+fn validate_request_header<E>(header: &Header) -> Result<(), HttpError<E>> {
+    if header.name.is_empty()
+        || contains_line_break(&header.name)
+        || contains_line_break(&header.value)
+        || header.is_name("host")
+        || header.is_name("connection")
+        || header.is_name("content-length")
+        || header.is_name("transfer-encoding")
+    {
+        return Err(HttpError::InvalidRequest);
+    }
+    Ok(())
+}
+
+fn is_replaced_header(header: &Header, request: &Request<'_>) -> bool {
+    header.is_name("accept")
+        || (request.content_type.is_some() && header.is_name("content-type"))
+        || (request.bearer_token.is_some() && header.is_name("authorization"))
+        || (request.organization.is_some() && header.is_name("openai-organization"))
+        || (request.project.is_some() && header.is_name("openai-project"))
+}
+
+fn log_request_sent(request: &Request<'_>) {
+    print!("[http] {} ", request.method.as_str());
+    if request.base_path.is_empty() {
+        print!("/");
+        print!("{}", request.path);
+    } else {
+        print!("{}", request.base_path);
+        if !request.path.is_empty() {
+            print!("/{}", request.path);
+        }
+    }
+    if let Some(body_len) = request.body_len {
+        println!(" sent, waiting for response... ({body_len} bytes body)");
+    } else {
+        println!(" sent, waiting for response...");
+    }
 }
 
 fn write_bytes<S>(socket: &mut S, bytes: &[u8]) -> Result<(), HttpError<S::Error>>
@@ -515,24 +617,35 @@ where
                 BodyFraming::UntilEof
             };
 
-            let framing_desc: &str = match framing {
-                BodyFraming::Empty => "no body",
-                BodyFraming::ContentLength(n) => "content-length",
-                BodyFraming::Chunked(_) => "chunked",
-                BodyFraming::UntilEof => "until-eof",
-            };
-            let content_length = if let BodyFraming::ContentLength(n) = framing {
-                format!(": {}", n)
-            } else {
-                String::new()
-            };
-            println!(
-                "[http] response: {}, {} headers, {}{}",
-                head.status,
-                head.headers.len(),
-                framing_desc,
-                content_length
-            );
+            match framing {
+                BodyFraming::Empty => {
+                    println!(
+                        "[http] response: {}, {} headers, no body",
+                        head.status,
+                        head.headers.len()
+                    )
+                }
+                BodyFraming::ContentLength(length) => println!(
+                    "[http] response: {}, {} headers, content-length: {}",
+                    head.status,
+                    head.headers.len(),
+                    length
+                ),
+                BodyFraming::Chunked(_) => {
+                    println!(
+                        "[http] response: {}, {} headers, chunked",
+                        head.status,
+                        head.headers.len()
+                    )
+                }
+                BodyFraming::UntilEof => {
+                    println!(
+                        "[http] response: {}, {} headers, until-eof",
+                        head.status,
+                        head.headers.len()
+                    )
+                }
+            }
 
             return Ok(Response {
                 status: head.status,

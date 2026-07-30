@@ -1,4 +1,4 @@
-// Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+// Copyright (c) 2025 vivo Mobile Communication Co., Ltd.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -134,10 +134,25 @@ pub enum StopSequence {
     Many(Vec<String>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ChatCompletionRequest {
-    pub model: String,
-    pub messages: Vec<ChatMessage>,
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoiceMode {
+    None,
+    Auto,
+    Required,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum ToolChoice<'a> {
+    Mode(ToolChoiceMode),
+    Named(&'a Value),
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ChatCompletionRequest<'a> {
+    pub model: &'a str,
+    pub messages: &'a [ChatMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,9 +196,9 @@ pub struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<Value>,
+    pub tool_choice: Option<ToolChoice<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Value>>,
+    pub tools: Option<&'a [Value]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_logprobs: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,10 +211,10 @@ pub struct ChatCompletionRequest {
     pub extra: BTreeMap<String, Value>,
 }
 
-impl ChatCompletionRequest {
-    pub fn new(model: impl Into<String>, messages: Vec<ChatMessage>) -> Self {
+impl<'a> ChatCompletionRequest<'a> {
+    pub fn new(model: &'a str, messages: &'a [ChatMessage]) -> Self {
         Self {
-            model: model.into(),
+            model,
             messages,
             audio: None,
             frequency_penalty: None,
