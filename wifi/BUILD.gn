@@ -61,7 +61,6 @@ reload_autoconf_and_build("wifi_example") {
     "-lregulatory",
     "-lphy",
     "-lpp",
-    # "-lembedded_tls",
   ]
   rustflags = []
   foreach(item, wifi_ldflags) {
