@@ -122,9 +122,9 @@ impl<T: std::io::Read + ?Sized> Read for FromStd<T> {
 impl<T: std::io::Write + ?Sized> Write for FromStd<T> {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         match self.inner.write(buf) {
-            Ok(0) if !buf.is_empty() => {
-                Err(AgentError::from(std::io::Error::from(std::io::ErrorKind::WriteZero)))
-            }
+            Ok(0) if !buf.is_empty() => Err(AgentError::from(std::io::Error::from(
+                std::io::ErrorKind::WriteZero,
+            ))),
             Ok(n) => Ok(n),
             Err(e) => Err(AgentError::from(e)),
         }
