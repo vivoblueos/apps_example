@@ -42,7 +42,8 @@ impl BlueInstant {
         };
         // Use the correct CLOCK_MONOTONIC=1 that the BlueOS kernel understands.
         const CLOCK_MONOTONIC: libc::clockid_t = 1;
-        let ret = unsafe { librs::time::clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut libc::timespec) };
+        let ret =
+            unsafe { librs::time::clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut libc::timespec) };
         assert_eq!(ret, 0, "clock_gettime(CLOCK_MONOTONIC) failed");
         Self {
             ns: ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64,
