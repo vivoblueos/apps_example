@@ -28,7 +28,7 @@ const PHONE_TCP_SERVER_PORT: u16 = 34228;
 const TCP_TEST_PAYLOAD: &[u8] = b"blueos-wifi-tcp-link-test";
 const TCP_RECV_EXPECTED_MESSAGES: usize = 2;
 const TCP_RECV_BUF_SIZE: usize = 512;
-const HTTPS_SERVER_NAME: &str =  "api.openai.com";
+const HTTPS_SERVER_NAME: &str = "api.openai.com";
 const HTTPS_SERVER_PORT: u16 = 443;
 const HTTPS_REQUEST_PATH: &str = "/v1/models";
 const TLS_RECORD_BUF_SIZE: usize = 16640;
@@ -171,7 +171,7 @@ impl RngCore for SimpleRng {
 impl CryptoRng for SimpleRng {}
 
 fn run_phone_https_check() -> std::io::Result<()> {
-    let addr = SocketAddrV4::new(Ipv4Addr::new(172,66,0,243), HTTPS_SERVER_PORT);
+    let addr = SocketAddrV4::new(Ipv4Addr::new(172, 66, 0, 243), HTTPS_SERVER_PORT);
     println!(
         "HTTPS check: connecting to {} (SNI: {})",
         addr, HTTPS_SERVER_NAME
@@ -200,7 +200,10 @@ fn run_phone_https_check() -> std::io::Result<()> {
     tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut rng))
         .map_err(|e| {
             println!("TLS handshake failed: {:?}", e);
-            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "TLS handshake failed")
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "TLS handshake failed",
+            )
         })?;
 
     println!("TLS handshake OK, sending HTTPS request");
@@ -209,10 +212,12 @@ fn run_phone_https_check() -> std::io::Result<()> {
         "GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n",
         HTTPS_REQUEST_PATH, HTTPS_SERVER_NAME
     );
-    tls.write(request.as_bytes())
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("TLS write: {:?}", e)))?;
-    tls.flush()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("TLS flush: {:?}", e)))?;
+    tls.write(request.as_bytes()).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("TLS write: {:?}", e))
+    })?;
+    tls.flush().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("TLS flush: {:?}", e))
+    })?;
 
     println!("HTTPS request sent, reading response...");
 

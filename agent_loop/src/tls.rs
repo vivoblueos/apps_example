@@ -14,14 +14,126 @@
 
 extern crate embedded_tls;
 use alloc::{format, string::String, vec, vec::Vec};
-use embedded_io::{ErrorType, Read, Write};
-use embedded_io_adapters::std::{to_std_error, FromStd};
+use core::fmt;
+use embedded_io::{Error as _, ErrorKind, ErrorType, Read, Write};
 use embedded_tls::blocking::*;
 use rand_core::{CryptoRng, RngCore};
 use std::net::TcpStream;
 
 const TLS_READ_RECORD_BUF_SIZE: usize = 16640;
 const TLS_WRITE_RECORD_BUF_SIZE: usize = 4096;
+
+/// Unified I/O error for the agent transport.
+///
+/// This is a local error type that implements `embedded_io::Error` directly, so
+/// the transport no longer depends on the `std` feature of `embedded-io` (which
+/// provides `impl embedded_io::Error for std::io::Error`). Keeping that feature
+/// off avoids modifying the gnrt-generated, "Do not edit!" `BUILD.gn` of
+/// `embedded-io-0.6.1`, which would otherwise globally enable `std` for every
+/// consumer of that crate.
+#[derive(Debug)]
+pub enum AgentError {
+    /// Raw TCP / std I/O failure on the underlying `TcpStream`.
+    Io(std::io::Error),
+    /// TLS-layer failure reported by `embedded-tls`.
+    Tls(TlsError),
+}
+
+impl fmt::Display for AgentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AgentError::Io(e) => write!(f, "{e}"),
+            AgentError::Tls(e) => write!(f, "{e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for AgentError {}
+
+impl embedded_io::Error for AgentError {
+    fn kind(&self) -> ErrorKind {
+        match self {
+            AgentError::Io(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+                std::io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,
+                std::io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,
+                std::io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,
+                std::io::ErrorKind::NotConnected => ErrorKind::NotConnected,
+                std::io::ErrorKind::AddrInUse => ErrorKind::AddrInUse,
+                std::io::ErrorKind::AddrNotAvailable => ErrorKind::AddrNotAvailable,
+                std::io::ErrorKind::BrokenPipe => ErrorKind::BrokenPipe,
+                std::io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,
+                std::io::ErrorKind::InvalidInput => ErrorKind::InvalidInput,
+                std::io::ErrorKind::InvalidData => ErrorKind::InvalidData,
+                std::io::ErrorKind::TimedOut => ErrorKind::TimedOut,
+                std::io::ErrorKind::Interrupted => ErrorKind::Interrupted,
+                std::io::ErrorKind::UnexpectedEof => ErrorKind::Other,
+                std::io::ErrorKind::Unsupported => ErrorKind::Unsupported,
+                std::io::ErrorKind::OutOfMemory => ErrorKind::OutOfMemory,
+                std::io::ErrorKind::WriteZero => ErrorKind::WriteZero,
+                _ => ErrorKind::Other,
+            },
+            AgentError::Tls(e) => e.kind(),
+        }
+    }
+}
+
+impl From<std::io::Error> for AgentError {
+    fn from(e: std::io::Error) -> Self {
+        AgentError::Io(e)
+    }
+}
+
+impl From<TlsError> for AgentError {
+    fn from(e: TlsError) -> Self {
+        AgentError::Tls(e)
+    }
+}
+
+/// Adapter wrapping a `std::io` type as an `embedded_io` type.
+///
+/// This is a local replacement for `embedded_io_adapters::std::FromStd`, so that
+/// the crate no longer depends on `embedded_io_adapters::std`. Unlike the
+/// upstream adapter it surfaces errors as [`AgentError`] rather than
+/// `std::io::Error`, which keeps the transport off the `embedded-io` `std`
+/// feature.
+#[derive(Clone)]
+pub(crate) struct FromStd<T: ?Sized> {
+    inner: T,
+}
+
+impl<T> FromStd<T> {
+    fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T: ?Sized> ErrorType for FromStd<T> {
+    type Error = AgentError;
+}
+
+impl<T: std::io::Read + ?Sized> Read for FromStd<T> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.inner.read(buf).map_err(AgentError::from)
+    }
+}
+
+impl<T: std::io::Write + ?Sized> Write for FromStd<T> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        match self.inner.write(buf) {
+            Ok(0) if !buf.is_empty() => {
+                Err(AgentError::from(std::io::Error::from(std::io::ErrorKind::WriteZero)))
+            }
+            Ok(n) => Ok(n),
+            Err(e) => Err(AgentError::from(e)),
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush().map_err(AgentError::from)
+    }
+}
 
 struct SimpleRng(fastrand::Rng);
 
@@ -51,22 +163,22 @@ pub struct TlsSocketStd<'a> {
 }
 
 impl<'a> ErrorType for TlsSocketStd<'a> {
-    type Error = std::io::Error;
+    type Error = AgentError;
 }
 
 impl<'a> Read for TlsSocketStd<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        self.inner.read(buf).map_err(to_std_error)
+        self.inner.read(buf).map_err(AgentError::from)
     }
 }
 
 impl<'a> Write for TlsSocketStd<'a> {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        self.inner.write(buf).map_err(to_std_error)
+        self.inner.write(buf).map_err(AgentError::from)
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
-        self.inner.flush().map_err(to_std_error)
+        self.inner.flush().map_err(AgentError::from)
     }
 }
 
@@ -76,7 +188,7 @@ pub enum AgentSocket<'a> {
 }
 
 impl<'a> ErrorType for AgentSocket<'a> {
-    type Error = std::io::Error;
+    type Error = AgentError;
 }
 
 impl<'a> Read for AgentSocket<'a> {
@@ -134,7 +246,7 @@ impl Default for EmbeddedTlsTransport {
 }
 
 impl crate::http::SocketTransport for EmbeddedTlsTransport {
-    type Error = std::io::Error;
+    type Error = AgentError;
     type Socket<'a> = AgentSocket<'a>;
 
     fn connect<'a>(
@@ -183,12 +295,7 @@ impl crate::http::SocketTransport for EmbeddedTlsTransport {
                     }
                     println!();
                 }
-                result.map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::ConnectionRefused,
-                        format!("TLS handshake failed: {e:?}"),
-                    )
-                })?;
+                result.map_err(AgentError::from)?;
                 println!("[http] TLS established");
 
                 Ok(AgentSocket::Tls(TlsSocketStd { inner: tls }))

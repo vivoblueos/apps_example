@@ -21,10 +21,10 @@ use embedded_graphics::{
     primitives::{PrimitiveStyle, Rectangle},
 };
 use embedded_graphics_core::{
+    Pixel,
     draw_target::DrawTarget,
     geometry::OriginDimensions,
-    pixelcolor::{raw::ToBytes, Rgb565, RgbColor},
-    Pixel,
+    pixelcolor::{Rgb565, RgbColor, raw::ToBytes},
 };
 use librs::{c_str::CStr, syscall::Syscall};
 use std::io::{Error, ErrorKind, Result};
@@ -249,7 +249,7 @@ fn write_all(fd: libc::c_int, mut buf: &[u8]) -> Result<()> {
                 return Err(Error::new(
                     ErrorKind::WriteZero,
                     "failed to write framebuffer",
-                ))
+                ));
             }
             Ok(size) => buf = &buf[size..],
             Err(librs::errno::Errno(errno)) => return Err(Error::from_raw_os_error(errno)),

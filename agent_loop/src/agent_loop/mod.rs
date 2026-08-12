@@ -14,7 +14,7 @@
 
 use embedded_io::Error;
 use serde_json::Value;
-use std::{fmt, io, println};
+use std::{fmt, println};
 
 use crate::{
     api::chat::{
@@ -22,7 +22,7 @@ use crate::{
     },
     caps::CapabilityRegistry,
     client::Client,
-    tls::EmbeddedTlsTransport,
+    tls::{AgentError, EmbeddedTlsTransport},
 };
 
 /// A simple monotonic clock using librs::clock_gettime with CLOCK_MONOTONIC.
@@ -42,7 +42,8 @@ impl BlueInstant {
         };
         // Use the correct CLOCK_MONOTONIC=1 that the BlueOS kernel understands.
         const CLOCK_MONOTONIC: libc::clockid_t = 1;
-        let ret = unsafe { librs::time::clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut libc::timespec) };
+        let ret =
+            unsafe { librs::time::clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut libc::timespec) };
         assert_eq!(ret, 0, "clock_gettime(CLOCK_MONOTONIC) failed");
         Self {
             ns: ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64,
@@ -62,7 +63,7 @@ const MAX_HISTORY_MESSAGES: usize = 24;
 
 pub enum AgentLoopError {
     IoError,
-    Api(crate::error::Error<io::Error>),
+    Api(crate::error::Error<AgentError>),
     InvalidResponse,
 }
 
@@ -214,7 +215,7 @@ impl AgentSession {
     }
 }
 
-fn is_not_found_error(error: &crate::error::Error<io::Error>) -> bool {
+fn is_not_found_error(error: &crate::error::Error<AgentError>) -> bool {
     matches!(error, crate::error::Error::Api { status: 404, .. })
 }
 

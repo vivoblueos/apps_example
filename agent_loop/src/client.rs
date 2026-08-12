@@ -15,7 +15,7 @@
 use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write;
 use embedded_io::Write as _;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     api::{
