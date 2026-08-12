@@ -21,10 +21,10 @@ use embedded_graphics::{
     primitives::{PrimitiveStyle, Rectangle},
 };
 use embedded_graphics_core::{
-    Pixel,
     draw_target::DrawTarget,
     geometry::OriginDimensions,
-    pixelcolor::{Rgb565, RgbColor, raw::ToBytes},
+    pixelcolor::{raw::ToBytes, Rgb565, RgbColor},
+    Pixel,
 };
 use librs::{c_str::CStr, syscall::Syscall};
 use std::io::{Error, ErrorKind, Result};
