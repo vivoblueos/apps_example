@@ -14,10 +14,8 @@
 
 extern crate esp_radio_sys;
 use librs::syscall::Syscall;
-use std::{
-    io::{Read, Write},
-    net::{Ipv4Addr, SocketAddrV4, TcpStream},
-};
+use std::io::{Read as _, Write as _};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 
 const SCAN_POLL_ATTEMPTS: usize = 25;
 const SCAN_POLL_INTERVAL_MS: u32 = 200;
@@ -34,7 +32,6 @@ const HTTPS_REQUEST_PATH: &str = "/v1/models";
 const TLS_RECORD_BUF_SIZE: usize = 16640;
 const HTTPS_RECV_BUF_SIZE: usize = 4096;
 
-extern crate embedded_io_adapters;
 extern crate fastrand;
 extern crate librs;
 extern crate rsrt;
@@ -142,10 +139,122 @@ fn run_phone_tcp_check() -> std::io::Result<()> {
     Ok(())
 }
 
+extern crate embedded_io;
 extern crate embedded_tls;
-use embedded_io_adapters::std::FromStd;
+use core::fmt;
+use embedded_io::{ErrorKind, ErrorType, Read, Write};
 use embedded_tls::blocking::*;
 use rand_core::{CryptoRng, RngCore};
+
+/// Unified I/O error for the TLS transport.
+///
+/// Local error type implementing `embedded_io::Error` directly, so the
+/// transport does not depend on the `std` feature of `embedded-io` (which
+/// provides `impl embedded_io::Error for std::io::Error`) nor on the `std`
+/// feature of `embedded-io-adapters` (whose `std::FromStd` adapter is
+/// `#[cfg(feature = "std")]`-gated). Both features are off because gnrt does
+/// not propagate Cargo feature deps across crates, and the vendored
+/// "Do not edit!" BUILD.gn files must not be edited.
+#[derive(Debug)]
+pub enum TlsTransportError {
+    Io(std::io::Error),
+    Tls(TlsError),
+}
+
+impl fmt::Display for TlsTransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TlsTransportError::Io(e) => write!(f, "{e}"),
+            TlsTransportError::Tls(e) => write!(f, "{e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for TlsTransportError {}
+
+impl embedded_io::Error for TlsTransportError {
+    fn kind(&self) -> ErrorKind {
+        match self {
+            TlsTransportError::Io(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+                std::io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,
+                std::io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,
+                std::io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,
+                std::io::ErrorKind::NotConnected => ErrorKind::NotConnected,
+                std::io::ErrorKind::AddrInUse => ErrorKind::AddrInUse,
+                std::io::ErrorKind::AddrNotAvailable => ErrorKind::AddrNotAvailable,
+                std::io::ErrorKind::BrokenPipe => ErrorKind::BrokenPipe,
+                std::io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,
+                std::io::ErrorKind::InvalidInput => ErrorKind::InvalidInput,
+                std::io::ErrorKind::InvalidData => ErrorKind::InvalidData,
+                std::io::ErrorKind::TimedOut => ErrorKind::TimedOut,
+                std::io::ErrorKind::Interrupted => ErrorKind::Interrupted,
+                std::io::ErrorKind::UnexpectedEof => ErrorKind::Other,
+                std::io::ErrorKind::Unsupported => ErrorKind::Unsupported,
+                std::io::ErrorKind::OutOfMemory => ErrorKind::OutOfMemory,
+                std::io::ErrorKind::WriteZero => ErrorKind::WriteZero,
+                _ => ErrorKind::Other,
+            },
+            TlsTransportError::Tls(e) => e.kind(),
+        }
+    }
+}
+
+impl From<std::io::Error> for TlsTransportError {
+    fn from(e: std::io::Error) -> Self {
+        TlsTransportError::Io(e)
+    }
+}
+
+impl From<TlsError> for TlsTransportError {
+    fn from(e: TlsError) -> Self {
+        TlsTransportError::Tls(e)
+    }
+}
+
+/// Adapter wrapping a `std::io` type as an `embedded_io` type.
+///
+/// Local replacement for `embedded_io_adapters::std::FromStd`, surfacing
+/// errors as [`TlsTransportError`] rather than `std::io::Error` so that the
+/// `embedded_io::Read + Write` trait bounds (which require `Self::Error:
+/// embedded_io::Error`) are satisfied without the `std` feature.
+#[derive(Clone)]
+struct FromStd<T: ?Sized> {
+    inner: T,
+}
+
+impl<T> FromStd<T> {
+    fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T: ?Sized> ErrorType for FromStd<T> {
+    type Error = TlsTransportError;
+}
+
+impl<T: std::io::Read + ?Sized> Read for FromStd<T> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.inner.read(buf).map_err(TlsTransportError::from)
+    }
+}
+
+impl<T: std::io::Write + ?Sized> Write for FromStd<T> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        match self.inner.write(buf) {
+            Ok(0) if !buf.is_empty() => Err(TlsTransportError::from(std::io::Error::from(
+                std::io::ErrorKind::WriteZero,
+            ))),
+            Ok(n) => Ok(n),
+            Err(e) => Err(TlsTransportError::from(e)),
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush().map_err(TlsTransportError::from)
+    }
+}
 
 struct SimpleRng(fastrand::Rng);
 

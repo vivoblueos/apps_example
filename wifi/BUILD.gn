@@ -24,7 +24,7 @@ reload_autoconf_and_build("wifi_example") {
 
   sources = [ "src/main.rs" ]
   deps = [
-    "//external/vendor/embedded-io-adapters-0.6.2:embedded_io_adapters",
+    "//external/vendor/embedded-io-0.6.1:embedded_io",
     "//external/vendor/embedded-tls-0.16.3:embedded_tls",
     "//external/vendor/fastrand-2.3.0:fastrand",
     "//external/vendor/rand_core-0.6.4:rand_core",
