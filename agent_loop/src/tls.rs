@@ -15,7 +15,7 @@
 extern crate embedded_tls;
 use alloc::{format, string::String, vec, vec::Vec};
 use embedded_io::{ErrorType, Read, Write};
-use embedded_io_adapters::std::{FromStd, to_std_error};
+use embedded_io_adapters::std::{to_std_error, FromStd};
 use embedded_tls::blocking::*;
 use rand_core::{CryptoRng, RngCore};
 use std::net::TcpStream;
@@ -143,7 +143,7 @@ impl crate::http::SocketTransport for EmbeddedTlsTransport {
         scheme: crate::http::Scheme,
     ) -> Result<Self::Socket<'a>, Self::Error> {
         println!("[http] connecting to {}:{}...", host, port);
-        let stream = TcpStream::connect(("124.72.129.70", port))?;
+        let stream = TcpStream::connect((host, port))?;
         stream.set_nodelay(true)?;
         println!("[http] TCP connected");
 
@@ -153,17 +153,19 @@ impl crate::http::SocketTransport for EmbeddedTlsTransport {
                 let server_name = self.sni.as_deref().unwrap_or(host);
                 let write_buf_ptr = self.write_buf.as_ptr();
                 let read_buf_ptr = self.read_buf.as_ptr();
-                let mut tls: TlsConnection<FromStd<TcpStream>, Aes128GcmSha256> = TlsConnection::new(
-                    FromStd::new(stream),
-                    &mut self.read_buf[..],
-                    &mut self.write_buf[..],
-                );
+                let mut tls: TlsConnection<FromStd<TcpStream>, Aes128GcmSha256> =
+                    TlsConnection::new(
+                        FromStd::new(stream),
+                        &mut self.read_buf[..],
+                        &mut self.write_buf[..],
+                    );
 
                 let config = TlsConfig::new()
                     .with_server_name(server_name)
                     .enable_rsa_signatures();
                 println!("[http] TLS handshake...");
-                let result = tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut self.rng));
+                let result =
+                    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut self.rng));
                 if let Err(ref e) = result {
                     println!("[http] TLS handshake failed: {:?}", e);
                     let wbuf = unsafe { core::slice::from_raw_parts(write_buf_ptr, 200) };
