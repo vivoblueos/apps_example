@@ -29,6 +29,7 @@ use crate::transfer::{
 };
 
 const DOWNLOAD_SERVER: &str = "192.168.101.89:8000";
+// Bare download keeps the default server file-to-device path mapping.
 const DEFAULT_DOWNLOAD_FILE: &str = "loader_app";
 const DOWNLOAD_DST: &str = "/data/payload.elf";
 const WINDOW_SIZE: usize = 1024;
