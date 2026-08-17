@@ -43,9 +43,10 @@ fn main() -> std::io::Result<()> {
 }
 
 fn main_loop() {
-    let api_key = env::var("OPENAI_API_KEY").expect("Please set OPENAI_API_KEY");
+    let api_key = env::var("OPENAI_API_KEY")
+        .unwrap_or_else(|_| String::from("sk-3481f4322b8d4d4cbf73ad050854009e"));
     let endpoint =
-        env::var("OPENAI_API_BASE").unwrap_or_else(|_| String::from("https://14.116.174.67"));
+        env::var("OPENAI_API_BASE").unwrap_or_else(|_| String::from("https://171.108.216.18"));
     let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| String::from("deepseek-chat"));
 
     let registry = CapabilityRegistry::load().unwrap();

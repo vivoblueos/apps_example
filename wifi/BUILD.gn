@@ -33,40 +33,70 @@ reload_autoconf_and_build("wifi_example") {
     "//kernel/rsrt:rsrt_std",
     "//libc",
     "//librs",
-    "//external/vendor/embedded-tls-0.16.3:embedded_tls",
-    "//external/vendor/embedded-io-adapters-0.6.2:embedded_io_adapters",
-    "//external/vendor/fastrand-2.3.0:fastrand",
-    "//external/vendor/rand_core-0.6.4:rand_core",
   ]
   linker_script = default_linker_script
   configs = [ "//build/boards/${board}:kernel_config" ]
 
-  wifi_ldflags = [
-    "-L" + rebase_path("${root_build_dir}/obj/external/vendor/esp-phy-0.2.0"),
-    "-L" +
-        rebase_path("${root_build_dir}/obj/external/vendor/esp-radio-0.18.0"),
-    "-L" + rebase_path("//external/vendor/esp-wifi-sys-esp32c3-0.2.0/libs"),
-    "-L" + rebase_path("//external/vendor/esp-rom-sys-0.1.4/ld/esp32c3"),
-    "-L" + rebase_path("//external/vendor/esp-radio-0.18.0"),
-    "-L" + rebase_path("//external/vendor/esp-phy-0.2.0"),
-    "-L" + rebase_path("//external/vendor/embedded-tls-0.16.3"),
-    "-lesp-phy",
-    "-lesp_rom_sys",
-    "-lbtbb",
-    "-lbtdm_app",
-    "-lcoexist",
-    "-lespnow",
-    "-lmesh",
-    "-lnet80211",
-    "-lcore",
-    "-lsmartconfig",
-    "-lwapi",
-    "-lwpa_supplicant",
-    "-lregulatory",
-    "-lphy",
-    "-lpp",
-    # "-lembedded_tls",
-  ]
+  # WiFi link parameters switch by board: C3 and C6 have different wifi-sys
+  # prebuilt library sets (C6 adds libble_app.a/libprintf.a, drops
+  # libbtdm_app.a), and the ld script subdirectory differs. Both the -L paths
+  # and the -l library name list must match the board, otherwise the final ELF
+  # link reports undefined reference.
+  if (board == "esp32c6_devkitc_1") {
+    wifi_ldflags = [
+      "-L" + rebase_path("${root_build_dir}/obj/external/vendor/esp-phy-0.2.0"),
+      "-L" +
+          rebase_path("${root_build_dir}/obj/external/vendor/esp-radio-0.18.0"),
+      "-L" + rebase_path("//external/vendor/esp-wifi-sys-esp32c6-0.2.0/libs"),
+      "-L" + rebase_path("//external/vendor/esp-rom-sys-0.1.4/ld/esp32c6"),
+      "-L" + rebase_path("//external/vendor/esp-radio-0.18.0"),
+      "-L" + rebase_path("//external/vendor/esp-phy-0.2.0"),
+      "-L" + rebase_path("//external/vendor/embedded-tls-0.16.3"),
+      "-lesp-phy",
+      "-lesp_rom_sys",
+      "-lble_app",
+      "-lbtbb",
+      "-lcoexist",
+      "-lespnow",
+      "-lmesh",
+      "-lnet80211",
+      "-lcore",
+      "-lphy",
+      "-lpp",
+      "-lsmartconfig",
+      "-lwapi",
+      "-lwpa_supplicant",
+      "-lprintf",
+      "-lregulatory",
+      "-lm",
+    ]
+  } else {
+    wifi_ldflags = [
+      "-L" + rebase_path("${root_build_dir}/obj/external/vendor/esp-phy-0.2.0"),
+      "-L" +
+          rebase_path("${root_build_dir}/obj/external/vendor/esp-radio-0.18.0"),
+      "-L" + rebase_path("//external/vendor/esp-wifi-sys-esp32c3-0.2.0/libs"),
+      "-L" + rebase_path("//external/vendor/esp-rom-sys-0.1.4/ld/esp32c3"),
+      "-L" + rebase_path("//external/vendor/esp-radio-0.18.0"),
+      "-L" + rebase_path("//external/vendor/esp-phy-0.2.0"),
+      "-L" + rebase_path("//external/vendor/embedded-tls-0.16.3"),
+      "-lesp-phy",
+      "-lesp_rom_sys",
+      "-lbtbb",
+      "-lbtdm_app",
+      "-lcoexist",
+      "-lespnow",
+      "-lmesh",
+      "-lnet80211",
+      "-lcore",
+      "-lsmartconfig",
+      "-lwapi",
+      "-lwpa_supplicant",
+      "-lregulatory",
+      "-lphy",
+      "-lpp",
+    ]
+  }
   rustflags = []
   foreach(item, wifi_ldflags) {
     rustflags += [ "-Clink-arg=${item}" ]
