@@ -12,26 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate librs;
-extern crate rsrt;
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use std::io::Write;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelList {
+    pub object: String,
+    pub data: Vec<Model>,
+}
 
-fn main() -> std::io::Result<()> {
-    println!("Running BlueOS Pico2 Blinky Example!");
-
-    let mut file = std::fs::OpenOptions::new().write(true).open("/dev/led")?;
-    let mut is_light_on = false;
-
-    loop {
-        if is_light_on {
-            file.write_all(b"0")?;
-        } else {
-            file.write_all(b"1")?;
-        }
-        is_light_on = !is_light_on; // Toggle the LED state
-        let _d = librs::time::msleep(1000);
-    }
-
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Model {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub owned_by: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }

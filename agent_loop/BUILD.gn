@@ -17,17 +17,21 @@ import("//build/templates/reload_autoconf_and_build.gni")
 import("//build/templates/rust.gni")
 import("//build/toolchain/blueos.gni")
 
-reload_autoconf_and_build("wifi_example") {
+reload_autoconf_and_build("agent_loop") {
   app_conf = [ "app.conf" ]
-  crate_name = "wifi_example"
+  crate_name = "agent_loop"
   crate_type = "bin"
 
   sources = [ "src/main.rs" ]
+  inputs = [ "capabilities.json" ]
   deps = [
     "//external/vendor/embedded-io-0.6.1:embedded_io",
     "//external/vendor/embedded-tls-0.16.3:embedded_tls",
     "//external/vendor/fastrand-2.3.0:fastrand",
+    "//external/vendor/httparse-1.10.1:httparse",
     "//external/vendor/rand_core-0.6.4:rand_core",
+    "//external/vendor/serde-1.0.228:serde",
+    "//external/vendor/serde_json-1.0.135:serde_json",
     "//kernel/adapter/esp_radio_sys",
     "//kernel/kconfig:blueos_kconfig",
     "//kernel/rsrt:rsrt_std",

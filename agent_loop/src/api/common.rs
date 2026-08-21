@@ -12,26 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate librs;
-extern crate rsrt;
+use alloc::string::String;
+use serde::{Deserialize, Serialize};
 
-use std::io::Write;
-
-fn main() -> std::io::Result<()> {
-    println!("Running BlueOS Pico2 Blinky Example!");
-
-    let mut file = std::fs::OpenOptions::new().write(true).open("/dev/led")?;
-    let mut is_light_on = false;
-
-    loop {
-        if is_light_on {
-            file.write_all(b"0")?;
-        } else {
-            file.write_all(b"1")?;
-        }
-        is_light_on = !is_light_on; // Toggle the LED state
-        let _d = librs::time::msleep(1000);
-    }
-
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeletionStatus {
+    pub id: String,
+    pub object: String,
+    pub deleted: bool,
 }
