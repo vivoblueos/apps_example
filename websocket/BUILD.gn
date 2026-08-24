@@ -27,6 +27,7 @@ reload_autoconf_and_build("websocket_example") {
     "//kernel/adapter/esp_radio_sys",
     "//kernel/kconfig:blueos_kconfig",
     "//external/vendor/embedded-websocket-0.9.5:embedded_websocket",
+    "//external/vendor/httparse-1.10.1:httparse",
     "//kernel/rsrt:rsrt_std",
     "//libc",
     "//librs",

@@ -42,7 +42,7 @@ pub fn wifi_connect(fd: i32) -> std::io::Result<()> {
     };
     if let Err(librs::errno::Errno(errno)) = ret {
         eprintln!("SIOCSIWENCODE failed: errno={}", errno);
-    }  
+    }
 
     // SIOCSIWESSID — trigger connect
     let mut iwreq = libc::iwreq {

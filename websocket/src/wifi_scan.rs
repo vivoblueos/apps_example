@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use librs::syscall::Syscall;
 use crate::wlan0_name;
+use librs::syscall::Syscall;
 
 const SCAN_POLL_ATTEMPTS: usize = 25;
 const SCAN_POLL_INTERVAL_MS: u32 = 200;
@@ -30,6 +30,7 @@ fn security_name(sec: u8) -> &'static str {
 }
 
 pub fn wifi_scan(fd: i32, wifi_ssid: &str) -> std::io::Result<()> {
+    println!("Triggering WiFi scan...");
     let scan_req = libc::iw_scan_req {
         scan_type: libc::IW_SCAN_TYPE_ACTIVE as u8,
         essid_len: 0,
@@ -69,6 +70,7 @@ pub fn wifi_scan(fd: i32, wifi_ssid: &str) -> std::io::Result<()> {
         eprintln!("SIOCSIWSCAN failed: errno={}", errno);
         return Err(std::io::Error::from_raw_os_error(errno));
     }
+    println!("Scan triggered, waiting for results...");
 
     let mut buf = vec![0u8; 4096];
     let data = libc::iw_point {
@@ -82,7 +84,7 @@ pub fn wifi_scan(fd: i32, wifi_ssid: &str) -> std::io::Result<()> {
         },
         u: libc::iwreq_data { data },
     };
-    let mut total = None;   
+    let mut total = None;
     for attempt in 0..SCAN_POLL_ATTEMPTS {
         let ret = unsafe {
             librs::syscall::sys::Sys::ioctl(
@@ -94,6 +96,7 @@ pub fn wifi_scan(fd: i32, wifi_ssid: &str) -> std::io::Result<()> {
         match ret {
             Ok(n) if n >= 0 => {
                 total = Some(n as usize);
+                println!("WiFi scan results ready after {} poll(s)", attempt + 1);
                 break;
             }
             Err(librs::errno::Errno(errno)) if attempt + 1 < SCAN_POLL_ATTEMPTS => {
@@ -115,7 +118,7 @@ pub fn wifi_scan(fd: i32, wifi_ssid: &str) -> std::io::Result<()> {
                 return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
             }
         }
-    } 
+    }
     let total = total.unwrap_or(0);
 
     if total < 4 {
