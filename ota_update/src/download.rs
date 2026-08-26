@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use libc::timespec;
+use librs::time::{clock_gettime, CLOCK_MONOTONIC};
 use std::{
     fs::{remove_file, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -23,8 +25,6 @@ use std::{
     thread,
     time::Duration,
 };
-use libc::timespec;
-use librs::time::{clock_gettime, CLOCK_MONOTONIC};
 
 use crate::http::{self, HttpBody as _, Method, Request};
 use crate::transfer::{
@@ -75,7 +75,10 @@ static WINDOW_COUNT: AtomicU32 = AtomicU32::new(0);
 const EVICT_THRESHOLD_MS: u32 = 100;
 
 fn now_ms() -> u32 {
-    let mut ts = timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut timespec) };
     (ts.tv_sec as u32) * 1000 + (ts.tv_nsec as u32) / 1_000_000
 }
@@ -285,7 +288,10 @@ fn crc_prefix(path: &str, offset: usize) -> Result<u32, String> {
             .read(&mut buffer[..want])
             .map_err(|e| format!("crc_prefix read failed: {}", e))?;
         if n == 0 {
-            return Err(format!("crc_prefix: {} short at {} < {}", path, read_total, offset));
+            return Err(format!(
+                "crc_prefix: {} short at {} < {}",
+                path, read_total, offset
+            ));
         }
         crc = transfer::crc32_update(crc, &buffer[..n]);
         read_total += n;
@@ -333,10 +339,7 @@ fn receive_file(
         crc_prefix(temporary, offset)?
     };
     if offset > 0 {
-        println!(
-            "download: {}/{} bytes (resumed)",
-            received, info.size
-        );
+        println!("download: {}/{} bytes (resumed)", received, info.size);
         let _ = std::io::stdout().flush();
     }
 
@@ -354,10 +357,7 @@ fn receive_file(
             let mut seq = window_sequence;
             while window_filled < target {
                 let (header, length, crc_valid) = read_frame_raw(stream, &mut payload)?;
-                if header.frame_type != FrameType::Data
-                    || header.sequence != seq
-                    || !crc_valid
-                {
+                if header.frame_type != FrameType::Data || header.sequence != seq || !crc_valid {
                     window_valid = false;
                 }
                 window[window_filled..window_filled + length].copy_from_slice(&payload[..length]);
@@ -383,10 +383,18 @@ fn receive_file(
 
         transfer_crc = transfer::crc32_update(transfer_crc, &window[..window_length]);
 
-        // Ack before write_all: the window is already in RAM, so the server can
-        // start streaming the next window into the TCP RX buffer while we write
-        // this one to flash. write_all failure aborts the whole transfer either
-        // way, so the optimistic Ack adds no recovery hazard.
+        output
+            .write_all(&window[..window_length])
+            .map_err(|error| format!("write {} failed: {}", temporary, error))?;
+        let t_write_end = now_ms();
+        let write_ms = t_write_end - t_recv_end;
+        WRITE_MS.fetch_add(write_ms, Ordering::Relaxed);
+        if write_ms >= EVICT_THRESHOLD_MS {
+            EVICT_COUNT.fetch_add(1, Ordering::Relaxed);
+            EVICT_MS.fetch_add(write_ms, Ordering::Relaxed);
+        }
+        thread::yield_now();
+
         received += window_length;
         send_offset_frame(
             stream,
@@ -394,20 +402,7 @@ fn receive_file(
             expected_sequence.wrapping_sub(1),
             received,
         )?;
-        let t_ack_end = now_ms();
-        ACK_MS.fetch_add(t_ack_end - t_recv_end, Ordering::Relaxed);
-
-        output
-            .write_all(&window[..window_length])
-            .map_err(|error| format!("write {} failed: {}", temporary, error))?;
-        let t_write_end = now_ms();
-        WRITE_MS.fetch_add(t_write_end - t_ack_end, Ordering::Relaxed);
-        if (t_write_end - t_ack_end) >= EVICT_THRESHOLD_MS {
-            EVICT_COUNT.fetch_add(1, Ordering::Relaxed);
-            EVICT_MS.fetch_add(t_write_end - t_ack_end, Ordering::Relaxed);
-        }
-        thread::yield_now();
-
+        ACK_MS.fetch_add(now_ms() - t_write_end, Ordering::Relaxed);
         WINDOW_COUNT.fetch_add(1, Ordering::Relaxed);
         if received == info.size || received % PROGRESS_INTERVAL == 0 {
             println!(
@@ -497,7 +492,10 @@ fn receive_file_http(temporary: &str, info: &OwnedTransferInfo) -> Result<(), St
     let response = http::send_request(adapter, request, 4 * 1024)
         .map_err(|error| format!("http request failed: {:?}", error))?;
     if !response.is_success() {
-        return Err(format!("http {} returned status {}", info.filename, response.status));
+        return Err(format!(
+            "http {} returned status {}",
+            info.filename, response.status
+        ));
     }
     println!(
         "download: http {} -> {}, streaming body...",
@@ -647,10 +645,7 @@ pub fn command(file: Option<&str>) -> Result<(), String> {
         let mut stream = match connect_server() {
             Ok(s) => s,
             Err(error) => {
-                eprintln!(
-                    "download: attempt {} connect failed: {}",
-                    attempt, error
-                );
+                eprintln!("download: attempt {} connect failed: {}", attempt, error);
                 thread::sleep(Duration::from_millis(200));
                 continue;
             }
@@ -661,10 +656,7 @@ pub fn command(file: Option<&str>) -> Result<(), String> {
             continue;
         }
         if let Err(error) = send_download_request(&mut stream, source_file, offset) {
-            eprintln!(
-                "download: attempt {} request failed: {}",
-                attempt, error
-            );
+            eprintln!("download: attempt {} request failed: {}", attempt, error);
             thread::sleep(Duration::from_millis(200));
             continue;
         }
@@ -780,10 +772,6 @@ fn run_update_connection() -> Result<(), String> {
                 );
                 send_frame(&mut stream, FrameType::Unchanged, 0, &[])?;
                 drop(stream);
-                // No outer with_fs_lock: command() acquires FS_LOCK internally
-                // (send_unchanged_if_matches / receive_file / install_file), and
-                // std::sync::Mutex is non-reentrant — wrapping it here deadlocks
-                // the pull the moment a new version is detected.
                 let result = command(Some(&info.filename));
                 match result {
                     Ok(()) => {
@@ -804,7 +792,10 @@ fn run_update_connection() -> Result<(), String> {
                         esp_rom_sys::rom::software_reset();
                     }
                     Err(error) => {
-                        eprintln!("update: pull {} failed: {} (will retry on reconnect)", info.filename, error);
+                        eprintln!(
+                            "update: pull {} failed: {} (will retry on reconnect)",
+                            info.filename, error
+                        );
                     }
                 }
                 // Returning lets update_worker reconnect and resume watching. The
@@ -847,7 +838,7 @@ fn clean_apps_dir(keep: Option<&str>) {
 }
 
 // Log the current on-device /data directory (file names + sizes) as a simple
-// progress/audit line. Used after a successful pull.
+// progress/audit line. Used at OTA loop entry and after a successful pull.
 fn log_data_dir() {
     let entries = match std::fs::read_dir(APPS_DIR) {
         Ok(entries) => entries,
@@ -876,6 +867,9 @@ fn log_data_dir() {
 // reconnects.
 pub fn auto_ota_loop() {
     println!("update: entering auto OTA loop");
+    let _ = std::fs::create_dir_all(APPS_DIR);
+    clean_apps_dir(None);
+    log_data_dir();
     const BACKOFF: [u64; 6] = [1, 2, 4, 8, 16, 30];
     let mut attempt = 0usize;
     loop {

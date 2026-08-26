@@ -88,7 +88,10 @@ fn try_apply_pending_update(path: &str) {
         Ok::<(), String>(())
     });
     if let Err(error) = load_result {
-        eprintln!("update: pending apply failed: {} — falling back to OTA loop", error);
+        eprintln!(
+            "update: pending apply failed: {} — falling back to OTA loop",
+            error
+        );
     }
 }
 
@@ -199,7 +202,8 @@ fn main_loop() {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if parts.len() != 2 {
                 eprintln!("Usage: rename <src> <dst>");
-            } else if let Err(error) = download::with_fs_lock(|| command_rename(parts[0], parts[1])) {
+            } else if let Err(error) = download::with_fs_lock(|| command_rename(parts[0], parts[1]))
+            {
                 eprintln!("{error}");
             }
             continue;

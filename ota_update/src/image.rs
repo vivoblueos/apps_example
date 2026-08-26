@@ -36,7 +36,10 @@ static COPY_READ_MS: AtomicU32 = AtomicU32::new(0);
 static COPY_WRITE_MS: AtomicU32 = AtomicU32::new(0);
 
 fn now_ms() -> u32 {
-    let mut ts = timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts as *mut timespec) };
     (ts.tv_sec as u32) * 1000 + (ts.tv_nsec as u32) / 1_000_000
 }
@@ -186,18 +189,19 @@ fn copy_range<R: Read + Seek, W: Write>(
     while remaining > 0 {
         let wanted = core::cmp::min(IO_CHUNK, remaining);
         let t_r = now_ms();
-        reader
-            .read_exact(&mut buffer[..wanted])
-            .map_err(|error| {
-                format!("read segment at {}/{}: {}", total - remaining, total, error)
-            })?;
+        reader.read_exact(&mut buffer[..wanted]).map_err(|error| {
+            format!("read segment at {}/{}: {}", total - remaining, total, error)
+        })?;
         let t_w = now_ms();
         COPY_READ_MS.fetch_add(t_w - t_r, Ordering::Relaxed);
-        output
-            .write_all(&mut buffer[..wanted])
-            .map_err(|error| {
-                format!("write segment at {}/{}: {}", total - remaining, total, error)
-            })?;
+        output.write_all(&mut buffer[..wanted]).map_err(|error| {
+            format!(
+                "write segment at {}/{}: {}",
+                total - remaining,
+                total,
+                error
+            )
+        })?;
         let t_e = now_ms();
         COPY_WRITE_MS.fetch_add(t_e - t_w, Ordering::Relaxed);
         remaining -= wanted;
@@ -461,7 +465,10 @@ fn build_xip_image_stream<R: Read + Seek, W: Write>(
             program.vaddr, program.offset, program.file_size, destination
         );
         copy_range(elf, program.offset, program.file_size, output)?;
-        println!("build_xip: seg done cursor={}", cursor + program.file_size as usize);
+        println!(
+            "build_xip: seg done cursor={}",
+            cursor + program.file_size as usize
+        );
         cursor += program.file_size as usize;
         previous = Some(key);
     }
@@ -703,7 +710,6 @@ const CHUNK: usize = 4096;
 // targets esp32-flash0 (riscv32-only), so a board constant here adds no new
 // architecture coupling.
 const DRAM_TOP: u32 = 0x3FCE_0000;
-
 
 // ELF parsing constants.
 const EI_MAG: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
@@ -1212,7 +1218,8 @@ fn validate_meta_path(elf_path: &[u8]) -> Result<u32, String> {
     if elf_path.is_empty() || elf_path.len() > MAX_META_PATH_LEN {
         return Err(format!(
             "metadata path length {} exceeds limit {}",
-            elf_path.len(), MAX_META_PATH_LEN
+            elf_path.len(),
+            MAX_META_PATH_LEN
         ));
     }
     u32::try_from(elf_path.len()).map_err(|_| "metadata path length overflow".to_string())
@@ -1295,9 +1302,7 @@ fn read_meta() -> Result<(ImageMetadata, Vec<u8>), String> {
     }
 
     // Split tail into optional DROM block + path. Old v2 (tail == path) → no DROM.
-    let (drom_vaddr, drom_region_offset, drom_image_size, elf_path) = if tail_len
-        == path_len
-    {
+    let (drom_vaddr, drom_region_offset, drom_image_size, elf_path) = if tail_len == path_len {
         (0, 0, 0, tail)
     } else if tail_len == META_DROM_SIZE + path_len {
         let drom_vaddr = u32_from_le(&tail[0..4]);
@@ -1361,12 +1366,12 @@ fn write_meta(meta: &ImageMetadata, elf_path: &str) -> Result<(), String> {
 // in the installed image / Loadable Region for the MAP_DROM ioctl.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct DromLayout {
-    drom_vaddr: u32, // ELF .rodata vaddr (0x3c120000), also the map target
-    program_offset: u32, // source offset in the ELF
-    filesz: u32, // raw .rodata bytes
+    drom_vaddr: u32,      // ELF .rodata vaddr (0x3c120000), also the map target
+    program_offset: u32,  // source offset in the ELF
+    filesz: u32,          // raw .rodata bytes
     physical_offset: u32, // absolute flash offset (LOADABLE_REGION_BASE + region_offset)
-    region_offset: u32, // Loadable-Region relative, passed to MAP_DROM ioctl
-    image_size: u32, // page-aligned mapped size (>= filesz)
+    region_offset: u32,   // Loadable-Region relative, passed to MAP_DROM ioctl
+    image_size: u32,      // page-aligned mapped size (>= filesz)
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -1875,13 +1880,18 @@ fn load(path: &str) -> Result<(), String> {
     let elf_path_len = validate_meta_path(path.as_bytes())?;
     let mut file = File::open(path).map_err(|e| format!("open '{}': {}", path, e))?;
     let header = read_header(&mut file)?;
-    println!("load: opened file_size={} phnum={}", header.file_size, header.program_count);
+    println!(
+        "load: opened file_size={} phnum={}",
+        header.file_size, header.program_count
+    );
     let elf_crc32 = crc32(&mut file, header.file_size)?;
     println!("load: elf crc done {:#010x}", elf_crc32);
     let layout = derive_xip_layout_stream(&mut file, &header)?;
     println!(
         "load: layout off={:#x} image_size={} erase={} drom={}",
-        layout.region_offset, layout.image_size, layout.erase_size,
+        layout.region_offset,
+        layout.image_size,
+        layout.erase_size,
         if layout.drom.is_some() { "yes" } else { "no" }
     );
 
@@ -2015,7 +2025,8 @@ fn run() -> Result<(), String> {
         Ok::<ImageMetadata, String>(meta)
     })?;
     set_current(meta);
-    let meta = current_loaded().ok_or_else(|| "current meta vanished after set_current".to_string())?;
+    let meta =
+        current_loaded().ok_or_else(|| "current meta vanished after set_current".to_string())?;
     call_mapped_image(&meta)
 }
 
@@ -2027,7 +2038,11 @@ fn call_mapped_image(meta: &ImageMetadata) -> Result<(), String> {
     let addr = map_exec(meta.region_offset, meta.image_size)
         .map_err(|e| format!("{} (try `image unmap`)", e))?;
     let drom_addr = if meta.drom_vaddr != 0 {
-        match map_drom(meta.drom_region_offset, meta.drom_image_size, meta.drom_vaddr) {
+        match map_drom(
+            meta.drom_region_offset,
+            meta.drom_image_size,
+            meta.drom_vaddr,
+        ) {
             Ok(a) => Some(a),
             Err(e) => {
                 let _ = unmap();
@@ -2074,9 +2089,7 @@ fn call_mapped_image(meta: &ImageMetadata) -> Result<(), String> {
 
 pub fn command(args: &[&str]) -> Result<(), String> {
     if args.is_empty() {
-        return Err(
-            "Usage: image <install|verify|clear|map|unmap|load|run> [path]".to_string(),
-        );
+        return Err("Usage: image <install|verify|clear|map|unmap|load|run> [path]".to_string());
     }
     match args[0] {
         "install" => {
