@@ -1,0 +1,98 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/boards/${board}.gni")
+import("//build/templates/reload_autoconf_and_build.gni")
+import("//build/templates/rust.gni")
+import("//build/toolchain/blueos.gni")
+
+reload_autoconf_and_build("ota_update") {
+  app_conf = [ "app.conf" ]
+  crate_name = "ota_update"
+  crate_type = "bin"
+
+  sources = [ "src/main.rs" ]
+  deps = [
+    "//external/vendor/embedded-io-0.6.1:embedded_io",
+    "//external/vendor/embedded-io-adapters-0.6.2:embedded_io_adapters",
+    "//external/vendor/embedded-tls-0.16.3:embedded_tls",
+    "//external/vendor/esp-rom-sys-0.1.4:esp_rom_sys",
+    "//external/vendor/fastrand-2.3.0:fastrand",
+    "//external/vendor/httparse-1.10.1:httparse",
+    "//external/vendor/rand_core-0.6.4:rand_core",
+    "//external/vendor/serde-1.0.228:serde",
+    "//external/vendor/serde_json-1.0.135:serde_json",
+    "//kernel/adapter/esp_radio_sys",
+    "//kernel/kconfig:blueos_kconfig",
+    "//kernel/kconfig:generate_rustflags_file",
+    "//kernel/rsrt:rsrt_std",
+    "//libc",
+    "//librs",
+  ]
+  linker_script = default_linker_script
+  configs = [
+    "//build/boards/${board}:kernel_config",
+    "//kernel/kconfig:kconfigs",
+  ]
+
+  wifi_ldflags = [
+    "-L" + rebase_path("${root_build_dir}/obj/external/vendor/esp-phy-0.2.0"),
+    "-L" +
+        rebase_path("${root_build_dir}/obj/external/vendor/esp-radio-0.18.0"),
+    "-L" + rebase_path("//external/vendor/esp-wifi-sys-esp32c3-0.2.0/libs"),
+    "-L" + rebase_path("//external/vendor/esp-rom-sys-0.1.4/ld/esp32c3"),
+    "-L" + rebase_path("//external/vendor/esp-radio-0.18.0"),
+    "-L" + rebase_path("//external/vendor/esp-phy-0.2.0"),
+    "-Wl,-T" + rebase_path("//external/vendor/esp-phy-0.2.0/phy_provides.x"),
+    "-lesp_rom_sys",
+    "-lbtbb",
+    "-lbtdm_app",
+    "-lcoexist",
+    "-lespnow",
+    "-lmesh",
+    "-lnet80211",
+    "-lcore",
+    "-lsmartconfig",
+    "-lwapi",
+    "-lwpa_supplicant",
+    "-lregulatory",
+    "-lphy",
+    "-lpp",
+  ]
+  rustflags = []
+  foreach(item, wifi_ldflags) {
+    rustflags += [ "-Clink-arg=${item}" ]
+  }
+}
+
+if (board == "seeed_xiao_esp32c3") {
+  action("ota_update_esp32_app") {
+    script = "//build/scripts/gen_esp32_image.py"
+    app_elf = "${root_build_dir}/bin/ota_update"
+    app_image = "${root_build_dir}/bin/ota_update-esp32-app.bin"
+    inputs = [ app_elf ]
+    outputs = [ app_image ]
+    deps = [ ":ota_update" ]
+    args = [
+      "elf2image",
+      "--chip",
+      chip,
+      "--flash_size",
+      "4MB",
+      "--output",
+      rebase_path(app_image),
+      rebase_path(app_elf),
+    ]
+  }
+}
