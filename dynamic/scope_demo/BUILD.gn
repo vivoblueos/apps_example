@@ -1,0 +1,108 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/templates/blueos_app_bundle.gni")
+import("//build/templates/blueos_dso.gni")
+
+# symbol corpus: an app bundle whose private DSOs
+# deliberately carry the strong/weak/hidden/protected visibility matrix and
+# an app that interposes private defaults, plus a second system DSO that must
+# not be interposed by the application scope.
+#
+# root (defines self_value=444, sys_target=42)
+# ├─ libweak.so.1     weak scope_value/scope_fn; linked with SysV DT_HASH
+# ├─ libstrong.so.1   strong scope_value/scope_fn + hidden_probe=555
+# ├─ libhidden.so.1   hidden hidden_probe=999 (+ owner-only hidden_report)
+# ├─ libprotected.so.1  protected self_value=333 (+ protected_report)
+# ├─ libweakdata.so.1   references undefined weak data `missing_data`
+# └─ libscope_sys.so.1 (system)  sys_target=777 (+ sys_report)
+#
+# The discovery order is weak before strong, so the frozen application scope
+# must skip the earlier weak definition and bind the later strong one.
+
+blueos_app_bundle("scope_demo") {
+  root_path = "/apps/scope_demo/app.elf"
+  root_sources = [ "app/main.rs" ]
+  root_depends = [
+    "libweak",
+    "libstrong",
+    "libhidden",
+    "libprotected",
+    "libweakdata",
+  ]
+  private_dsos = [
+    {
+      name = "libweak"
+      soname = "libweak.so.1"
+      vfs_path = "/apps/scope_demo/lib/libweak.so.1"
+      sources = [ "libweak/lib.rs" ]
+      depends = []
+
+      # SysV hash only: one corpus artifact must exercise DT_HASH.
+      rustflags = [ "-Clink-arg=-Wl,--hash-style=sysv" ]
+    },
+    {
+      name = "libstrong"
+      soname = "libstrong.so.1"
+      vfs_path = "/apps/scope_demo/lib/libstrong.so.1"
+      sources = [ "libstrong/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "libhidden"
+      soname = "libhidden.so.1"
+      vfs_path = "/apps/scope_demo/lib/libhidden.so.1"
+      sources = [ "libhidden/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "libprotected"
+      soname = "libprotected.so.1"
+      vfs_path = "/apps/scope_demo/lib/libprotected.so.1"
+      sources = [ "libprotected/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "libweakdata"
+      soname = "libweakdata.so.1"
+      vfs_path = "/apps/scope_demo/lib/libweakdata.so.1"
+      sources = [ "libweakdata/lib.rs" ]
+      depends = []
+    },
+  ]
+  extra_root_deps = [ ":scope_sys" ]
+
+  # The root imports `sys_report` from the second system DSO.
+  root_rustflags = [ "-Clink-arg=-l:libscope_sys.so" ]
+}
+
+# The second system DSO is not a package-private image. It is seeded at
+# /system/lib, declared in the kernel's system catalog, and
+# found through the system catalog. The app defines a same-named `sys_target`;
+# the fresh system load must still bind its own definition.
+blueos_dso("scope_sys") {
+  crate_name = "scope_sys"
+
+  # Exercise the path-keyed system registry: without DT_SONAME the root's
+  # DT_NEEDED is the build filename (`libscope_sys.so`), while the catalog
+  # maps that lookup name to `/system/lib/libscope_sys.so.1`.
+  omit_soname = true
+  sources = [ "sys/lib.rs" ]
+  deps = [ "//librs:libc" ]
+  _lib_dir = rebase_path("${root_out_dir}/lib")
+  rustflags = [
+    "-Clink-arg=-L${_lib_dir}",
+    "-Clink-arg=-l:liblibrs.so",
+  ]
+}
