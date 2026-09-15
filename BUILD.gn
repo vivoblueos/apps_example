@@ -23,4 +23,16 @@ group("check_apps") {
     "//apps/example/net:net_example",
     "//apps/example/no_std:no_std_example_runner",
   ]
+  if (board == "qemu_mps2_an385") {
+    deps += [
+      "//apps/example/dynamic/clang_c",
+      "//apps/example/dynamic/clang_cxx",
+      "//apps/example/dynamic/cycle_demo",
+      "//apps/example/dynamic/multi_dso:multi",
+      "//apps/example/dynamic/rust_std:rust_std_all",
+      "//apps/example/dynamic/scope_bad",
+      "//apps/example/dynamic/scope_demo",
+      "//apps/example/dynamic/tls_demo",
+    ]
+  }
 }

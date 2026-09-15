@@ -1,0 +1,80 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/templates/blueos_clang_dynamic.gni")
+
+# A plain C PIE with this runtime closure:
+#
+# app.elf -> libclang_c_private.so.1 -> libc.so.1
+# `-----------------------^
+#
+# Both artifacts are C. The loader contract is language-neutral, so what this
+# fixture proves is that a C program needs nothing beyond the same libc surface
+# the Rust and C++ fixtures use: no runtime library, no language-specific
+# relocation, no C++-only symbol.
+_libc = "${root_out_dir}/lib/liblibrs.so"
+_private = "${root_out_dir}/lib/libclang_c_private.so.1"
+_root = "${root_out_dir}/bin/clang_c_root"
+_start = "${root_out_dir}/lib/libblueos_scrt1.a"
+
+blueos_clang_dynamic_artifact("clang_c_private") {
+  kind = "dso"
+  sources = [ "private/private.c" ]
+  libraries = [ _libc ]
+  deps = [ "//librs:libc" ]
+}
+
+blueos_clang_dynamic_artifact("clang_c_root") {
+  kind = "pie"
+  sources = [ "app/main.c" ]
+  start_object = _start
+  libraries = [
+    _private,
+    _libc,
+  ]
+  deps = [
+    ":clang_c_private",
+    "//librs:blueos_scrt1",
+    "//librs:libc",
+  ]
+}
+
+_layout = "${target_gen_dir}/clang_c_layout.json"
+action("clang_c_layout") {
+  script = "//build/scripts/gen_blueos_app_layout.py"
+  inputs = [
+    _root,
+    _private,
+  ]
+  deps = [
+    ":clang_c_private",
+    ":clang_c_private_check",
+    ":clang_c_root",
+    ":clang_c_root_check",
+  ]
+  args = [
+    "--root",
+    "/apps/clang_c/app.elf," + rebase_path(_root, root_build_dir),
+    "--file",
+    "/apps/clang_c/lib/libclang_c_private.so.1," +
+        rebase_path(_private, root_build_dir),
+    "--out",
+    rebase_path(_layout, root_build_dir),
+  ]
+  outputs = [ _layout ]
+}
+
+group("clang_c") {
+  deps = [ ":clang_c_layout" ]
+}
