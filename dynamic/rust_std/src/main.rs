@@ -35,7 +35,11 @@ fn main() {
     for index in 0..8u32 {
         values.push(index * 2);
     }
-    println!("rust-std: sum={} len={}", values.iter().sum::<u32>(), values.len());
+    println!(
+        "rust-std: sum={} len={}",
+        values.iter().sum::<u32>(),
+        values.len()
+    );
 
     // Formatting + a heap String.
     let joined = values
