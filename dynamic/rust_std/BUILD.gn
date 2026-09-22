@@ -39,5 +39,5 @@ dynamic_app("rust_std") {
 }
 
 group("rust_std_all") {
-  deps = [ ":rust_std_check" ]
+  deps = [ ":rust_std" ]
 }
