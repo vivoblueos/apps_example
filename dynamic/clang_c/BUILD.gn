@@ -59,9 +59,7 @@ action("clang_c_layout") {
   ]
   deps = [
     ":clang_c_private",
-    ":clang_c_private_check",
     ":clang_c_root",
-    ":clang_c_root_check",
   ]
   args = [
     "--root",
