@@ -1,0 +1,54 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/templates/blueos_app_bundle.gni")
+
+# Dynamic application bundle with a private dependency closure:
+#
+# app ──┬── foo ──┬── common ── libc.so.1
+# │         └── libc.so.1
+# ├── bar ─── common
+# └── libc.so.1
+#
+blueos_app_bundle("multi") {
+  root_path = "/apps/multi/app.elf"
+  root_sources = [ "app/main.rs" ]
+  root_depends = [
+    "foo",
+    "bar",
+  ]
+  private_dsos = [
+    {
+      name = "foo"
+      soname = "libfoo.so.1"
+      vfs_path = "/apps/multi/lib/libfoo.so.1"
+      sources = [ "libfoo/lib.rs" ]
+      depends = [ "common" ]
+    },
+    {
+      name = "bar"
+      soname = "libbar.so.1"
+      vfs_path = "/apps/multi/lib/libbar.so.1"
+      sources = [ "libbar/lib.rs" ]
+      depends = [ "common" ]
+    },
+    {
+      name = "common"
+      soname = "libcommon.so.1"
+      vfs_path = "/apps/multi/lib/libcommon.so.1"
+      sources = [ "libcommon/lib.rs" ]
+      depends = []
+    },
+  ]
+}

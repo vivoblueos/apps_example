@@ -1,0 +1,77 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/templates/blueos_app_bundle.gni")
+import("//build/templates/blueos_dso.gni")
+
+# The GN build graph must stay acyclic, but the ELF closure may not: this
+# stub carries libcycle_a's SONAME so libcycle_b can record its back-edge
+# DT_NEEDED before the real libcycle_a (which links back against b) exists.
+blueos_dso("cycle_a_bootstrap") {
+  crate_name = "cycle_a_bootstrap"
+  soname = "libcycle_a.so.1"
+  sources = [ "bootstrap/lib.rs" ]
+  deps = [ "//librs:libc" ]
+  _lib_dir = rebase_path("${root_out_dir}/lib")
+  rustflags = [
+    "-Clink-arg=-L${_lib_dir}",
+    "-Clink-arg=-l:liblibrs.so",
+  ]
+}
+
+# private-cycle corpus: the runtime closure
+# contains a real private cycle — libcycle_a and libcycle_b each declare the
+# other — so the loader must freeze one SCC with a stable discovery order,
+# initialize it dependency-first, and run the fini in the exact reverse.
+
+blueos_app_bundle("cycle_demo") {
+  root_path = "/apps/cycle_demo/app.elf"
+  root_sources = [ "app/main.rs" ]
+  root_depends = [
+    "libcycle_a",
+    "libcycle_b",
+  ]
+  private_dsos = [
+    {
+      name = "libcommon"
+      soname = "libcommon.so.1"
+      vfs_path = "/apps/cycle_demo/lib/libcommon.so.1"
+      sources = [ "libcommon/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "libcycle_a"
+      soname = "libcycle_a.so.1"
+      vfs_path = "/apps/cycle_demo/lib/libcycle_a.so.1"
+      sources = [ "libcycle_a/lib.rs" ]
+      depends = [
+        "libcycle_b",
+        "libcommon",
+      ]
+    },
+    {
+      name = "libcycle_b"
+      soname = "libcycle_b.so.1"
+      vfs_path = "/apps/cycle_demo/lib/libcycle_b.so.1"
+      sources = [ "libcycle_b/lib.rs" ]
+
+      # The back edge links against the bootstrap stub (same SONAME): GN
+      # stays acyclic while the DT_NEEDED cycle closes at the ELF level.
+      depends = [
+        "cycle_a_bootstrap",
+        "libcommon",
+      ]
+    },
+  ]
+}
