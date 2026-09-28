@@ -33,7 +33,7 @@
 #![feature(c_variadic)]
 
 use core::{
-    ffi::{c_char, c_int, c_ulong},
+    ffi::{c_char, c_int, c_ulonglong},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -44,10 +44,10 @@ extern "C" {
     static hidden_probe: i32;
     fn hidden_report() -> i32;
     fn protected_report() -> i32;
-    fn weakdata_read() -> u32;
+    fn weakdata_read() -> usize;
     fn sys_report() -> i32;
     fn sys_ctor_count() -> u32;
-    fn strtoul(input: *const c_char, end: *mut *mut c_char, base: c_int) -> c_ulong;
+    fn strtoull(input: *const c_char, end: *mut *mut c_char, base: c_int) -> c_ulonglong;
     fn usleep(usec: u32) -> c_int;
 }
 
@@ -75,7 +75,7 @@ pub extern "C" fn main(
     // address space. Hold both DSO leases until both launchers have returned.
     if argc == 3 && unsafe { core::ffi::CStr::from_ptr(*argv.add(1)).to_bytes() } == b"--test-gate"
     {
-        let ready = unsafe { strtoul(*argv.add(2), core::ptr::null_mut(), 16) } as usize
+        let ready = unsafe { strtoull(*argv.add(2), core::ptr::null_mut(), 16) } as usize
             as *const AtomicUsize;
         let mut opened = false;
         for _ in 0..30_000 {

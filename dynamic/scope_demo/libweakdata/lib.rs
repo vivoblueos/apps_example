@@ -21,24 +21,33 @@
 
 use core::arch::global_asm;
 
-// A real R_ARM_ABS32 data relocation against the undefined weak symbol:
+// A native-width absolute data relocation against the undefined weak symbol:
 // LLD keeps it dynamic, and the loader's relocation policy binds undefined
 // weak *data* to zero when no definition is available.
-global_asm!(
-    ".weak missing_data",
-    ".global weakdata_value",
-    ".section .data.weakdata_value",
-    ".align 4",
-    "weakdata_value:",
-    ".word missing_data",
-);
+macro_rules! weak_data_slot {
+    ($word:literal) => {
+        global_asm!(
+            ".weak missing_data",
+            ".global weakdata_value",
+            ".section .data.weakdata_value",
+            ".align 4",
+            "weakdata_value:",
+            $word,
+        );
+    };
+}
+
+#[cfg(target_pointer_width = "32")]
+weak_data_slot!(".word missing_data");
+#[cfg(target_pointer_width = "64")]
+weak_data_slot!(".quad missing_data");
 
 extern "C" {
-    static weakdata_value: u32;
+    static weakdata_value: usize;
 }
 
 #[no_mangle]
-pub extern "C" fn weakdata_read() -> u32 {
+pub extern "C" fn weakdata_read() -> usize {
     unsafe { core::ptr::read_volatile(&weakdata_value) }
 }
 
