@@ -32,7 +32,10 @@
 #![no_main]
 #![feature(c_variadic)]
 
-use core::ffi::{c_char, c_int};
+use core::{
+    ffi::{c_char, c_int, c_ulong},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 extern "C" {
     fn printf(format: *const c_char, ...) -> c_int;
@@ -44,6 +47,8 @@ extern "C" {
     fn weakdata_read() -> u32;
     fn sys_report() -> i32;
     fn sys_ctor_count() -> u32;
+    fn strtoul(input: *const c_char, end: *mut *mut c_char, base: c_int) -> c_ulong;
+    fn usleep(usec: u32) -> c_int;
 }
 
 /// The root's interposing strong definition (application scope, first).
@@ -62,10 +67,30 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 
 #[no_mangle]
 pub extern "C" fn main(
-    _argc: c_int,
-    _argv: *const *const c_char,
+    argc: c_int,
+    argv: *const *const c_char,
     _envp: *const *const c_char,
 ) -> c_int {
+    // The concurrency test passes a shared atomic address in the flat kernel
+    // address space. Hold both DSO leases until both launchers have returned.
+    if argc == 3 && unsafe { core::ffi::CStr::from_ptr(*argv.add(1)).to_bytes() } == b"--test-gate"
+    {
+        let ready = unsafe { strtoul(*argv.add(2), core::ptr::null_mut(), 16) } as usize
+            as *const AtomicUsize;
+        let mut opened = false;
+        for _ in 0..30_000 {
+            if unsafe { (*ready).load(Ordering::Acquire) } == 2 {
+                opened = true;
+                break;
+            }
+            unsafe { usleep(1000) };
+        }
+        if !opened {
+            unsafe { printf(b"scope: concurrent gate timeout\n\0".as_ptr().cast()) };
+            return -1;
+        }
+    }
+
     let value = unsafe { scope_value };
     let fn_value = unsafe { scope_fn() };
     let hidden = unsafe { hidden_probe };
