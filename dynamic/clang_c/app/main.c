@@ -28,6 +28,7 @@
 // object owned by the private DSO.
 
 #include <stddef.h>
+#include <stdint.h>
 
 extern int printf(const char *format, ...);
 extern void *malloc(size_t size);
@@ -38,6 +39,8 @@ extern int memcmp(const void *left, const void *right, size_t count);
 
 extern int clang_c_private_base(void);
 extern int clang_c_private_value(int input);
+extern float clang_c_private_float(float first, float second);
+extern double clang_c_private_double(double first, double second);
 
 // A file-scope object in the root's own data segment, so the image has a
 // writable BSS word that only relocation + startup can have initialized.
@@ -66,6 +69,21 @@ static int heap_round_trip(void) {
   return same;
 }
 
+// Cross the PLT with floating-point arguments and return values. Compare the
+// result bits so the soft-float board needs no arithmetic runtime helpers.
+static int floating_point_round_trip(void) {
+  union {
+    float value;
+    uint32_t bits;
+  } single = {.value = clang_c_private_float(1.5f, 2.75f)};
+  union {
+    double value;
+    uint64_t bits;
+  } wide = {.value = clang_c_private_double(1.5, 6.25)};
+  return single.bits == UINT32_C(0x40300000) &&
+         wide.bits == UINT64_C(0x4019000000000000);
+}
+
 int main(int argc, char *argv[], char *envp[]) {
   (void)envp;
 
@@ -79,8 +97,10 @@ int main(int argc, char *argv[], char *envp[]) {
   printf("clang-c: result=%d argc=%d argv1=%s argv1len=%u\n", result, argc,
          argument, (unsigned)strlen(argument));
   printf("clang-c: heap ok=%d\n", heap_round_trip());
+  const int float_ok = floating_point_round_trip();
+  printf("clang-c: float abi ok=%d\n", float_ok);
 
   // 49 == (37 + 5) + 7 when the DSO constructor ran exactly once and the
   // relocation of its data object landed on the right address.
-  return result == 49 ? 0 : 1;
+  return result == 49 && float_ok ? 0 : 1;
 }

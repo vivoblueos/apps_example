@@ -22,7 +22,7 @@ blueos_dso("cycle_a_bootstrap") {
   crate_name = "cycle_a_bootstrap"
   soname = "libcycle_a.so.1"
   sources = [ "bootstrap/lib.rs" ]
-  deps = [ "//librs:libc" ]
+  data_deps = [ "//librs:libc" ]
   _lib_dir = rebase_path("${root_out_dir}/lib")
   rustflags = [
     "-Clink-arg=-L${_lib_dir}",

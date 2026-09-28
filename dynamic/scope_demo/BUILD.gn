@@ -99,7 +99,7 @@ blueos_dso("scope_sys") {
   # maps that lookup name to `/system/lib/libscope_sys.so.1`.
   omit_soname = true
   sources = [ "sys/lib.rs" ]
-  deps = [ "//librs:libc" ]
+  data_deps = [ "//librs:libc" ]
   _lib_dir = rebase_path("${root_out_dir}/lib")
   rustflags = [
     "-Clink-arg=-L${_lib_dir}",

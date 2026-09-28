@@ -23,7 +23,7 @@ group("check_apps") {
     "//apps/example/net:net_example",
     "//apps/example/no_std:no_std_example_runner",
   ]
-  if (board == "qemu_mps2_an385") {
+  if (defined(dynamic_loader) && dynamic_loader) {
     deps += [
       "//apps/example/dynamic/clang_c",
       "//apps/example/dynamic/clang_cxx",

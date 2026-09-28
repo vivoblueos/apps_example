@@ -37,3 +37,13 @@ __attribute__((destructor)) static void clang_c_private_destructor(void) {
 int clang_c_private_base(void) { return private_state; }
 
 int clang_c_private_value(int input) { return private_state + input; }
+
+float clang_c_private_float(float first, float second) {
+  (void)first;
+  return second;
+}
+
+double clang_c_private_double(double first, double second) {
+  (void)first;
+  return second;
+}
