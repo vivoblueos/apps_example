@@ -28,6 +28,7 @@ group("check_apps") {
       "//apps/example/dynamic/clang_c",
       "//apps/example/dynamic/clang_cxx",
       "//apps/example/dynamic/cycle_demo",
+      "//apps/example/dynamic/dlopen_demo",
       "//apps/example/dynamic/multi_dso:multi",
       "//apps/example/dynamic/rust_std:rust_std_all",
       "//apps/example/dynamic/scope_bad",
