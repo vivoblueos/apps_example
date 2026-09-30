@@ -1,0 +1,97 @@
+# Copyright (c) 2026 vivo Mobile Communication Co., Ltd.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/templates/blueos_app_bundle.gni")
+
+static_library("dlopen_c_api") {
+  sources = [ "c_api/probe.c" ]
+  configs += [ "//build/boards/${board}:dynamic_config" ]
+  cflags = [
+    "-fPIC",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-std=c11",
+  ]
+}
+
+blueos_app_bundle("dlopen_demo") {
+  root_path = "/apps/dlopen/app.elf"
+  root_sources = [ "app/main.rs" ]
+  root_depends = [ "dl_base" ]
+  extra_root_deps = [ ":dlopen_c_api" ]
+  root_rustflags = [
+    "-Clink-arg=-Wl,--export-dynamic-symbol=dl_event",
+    "-Clink-arg=" + rebase_path("${root_out_dir}/lib/libdlopen_c_api.a"),
+  ]
+  private_dsos = [
+    {
+      name = "dl_base"
+      soname = "libdl_base.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_base.so.1"
+      sources = [ "base/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_dep"
+      soname = "libdl_dep.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_dep.so.1"
+      sources = [ "dep/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_plugin"
+      soname = "libdl_plugin.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_plugin.so.1"
+      sources = [ "plugin/lib.rs" ]
+      depends = [ "dl_dep" ]
+      rustflags = [ "-Clink-arg=-Wl,--defsym=dl_absolute_zero=0" ]
+    },
+    {
+      name = "dl_provider"
+      soname = "libdl_provider.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_provider.so.1"
+      sources = [ "provider/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_consumer"
+      soname = "libdl_consumer.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_consumer.so.1"
+      sources = [ "consumer/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_bad"
+      soname = "libdl_bad.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_bad.so.1"
+      sources = [ "bad/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_nested"
+      soname = "libdl_nested.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_nested.so.1"
+      sources = [ "nested/lib.rs" ]
+      depends = []
+    },
+    {
+      name = "dl_tls"
+      soname = "libdl_tls.so.1"
+      vfs_path = "/apps/dlopen/lib/libdl_tls.so.1"
+      sources = [ "tls/lib.rs" ]
+      depends = []
+    },
+  ]
+}
